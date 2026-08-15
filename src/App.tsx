@@ -3,6 +3,7 @@ import MapView from "./components/MapView";
 import BottomCards from "./components/BottomCards";
 import DetailSheet from "./components/DetailSheet";
 import LocationSearch from "./components/LocationSearch";
+import AdBanner from "./components/AdBanner";
 import { useKakaoLoader } from "./hooks/useKakaoLoader";
 import { useGeolocation } from "./hooks/useGeolocation";
 import { useNearbyRestrooms } from "./hooks/useNearbyRestrooms";
@@ -164,6 +165,7 @@ export default function App() {
           {t.safety.notice}
           <br />({t.safety.dataUpdated}: {dataMeta.updatedAt})
         </div>
+        <AdBanner />
       </footer>
 
       <DetailSheet restroom={selected} origin={origin} onClose={() => setSelectedId(null)} />
