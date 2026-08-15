@@ -2,8 +2,14 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
+// 배포 위치에 따라 base 경로가 달라진다.
+// - Vercel/루트 배포: "/" (기본값)
+// - GitHub Pages(cheongbaek/find_wc): "/find_wc/" — 워크플로에서 BASE_PATH로 주입
+const base = process.env.BASE_PATH ?? "/";
+
 // https://vite.dev/config/
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -17,7 +23,8 @@ export default defineConfig({
         background_color: "#ffffff",
         display: "standalone",
         orientation: "portrait",
-        start_url: "/",
+        start_url: base,
+        scope: base,
         lang: "ko",
         icons: [
           { src: "icons/icon-192.png", sizes: "192x192", type: "image/png" },

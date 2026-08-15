@@ -78,7 +78,7 @@ export default function App() {
     <div className="app">
       <header className="top-bar">
         <span className="app-title">
-          <img src="/logo.png" alt="" className="app-logo" />
+          <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="app-logo" />
           {t.app.name}
         </span>
         <div className="top-bar-actions">
