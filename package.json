@@ -1,15 +1,13 @@
 {
-  "name": "restroommap",
+  "name": "traj-compare",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "긴급 상황에서 가장 가까운 공공화장실을 찾는 모바일 PWA",
+  "description": "매핑 궤적(CSV)과 주행 궤적(CSV)을 카카오 위성지도 위에 겹쳐 비교하는 웹 앱",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "geocode": "node scripts/geocode.mjs",
-    "tiles": "node scripts/build-tiles.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -20,7 +18,6 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11",
-    "vite-plugin-pwa": "^0.21.1"
+    "vite": "^5.4.11"
   }
 }

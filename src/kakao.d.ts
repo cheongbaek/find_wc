@@ -1,4 +1,4 @@
-// 카카오맵 JS SDK 최소 타입 선언 (필요 부분만)
+// 카카오맵 JS SDK 최소 타입 선언 — 이 앱이 실제로 쓰는 것만 적는다.
 declare global {
   interface Window {
     kakao: typeof kakao;
@@ -13,6 +13,11 @@ declare global {
       getLng(): number;
     }
 
+    class LatLngBounds {
+      constructor();
+      extend(latlng: LatLng): void;
+    }
+
     class Map {
       constructor(container: HTMLElement, options: { center: LatLng; level: number });
       setCenter(latlng: LatLng): void;
@@ -20,44 +25,40 @@ declare global {
       setLevel(level: number): void;
       getLevel(): number;
       panTo(latlng: LatLng): void;
-      setBounds(bounds: LatLngBounds): void;
-      getProjection(): Projection;
+      /** 패딩(px)을 주면 궤적이 화면 가장자리·패널에 가리지 않는다: top, right, bottom, left */
+      setBounds(
+        bounds: LatLngBounds,
+        paddingTop?: number,
+        paddingRight?: number,
+        paddingBottom?: number,
+        paddingLeft?: number
+      ): void;
+      setMapTypeId(mapTypeId: MapTypeId): void;
+      addOverlayMapTypeId(mapTypeId: MapTypeId): void;
+      removeOverlayMapTypeId(mapTypeId: MapTypeId): void;
+      relayout(): void;
     }
 
-    interface Projection {
-      pointFromCoords(latlng: LatLng): Point;
-      coordsFromPoint(point: Point): LatLng;
-    }
+    /** ROADMAP=일반, SKYVIEW=위성, HYBRID=위성 위에 얹는 도로·지명 오버레이 */
+    type MapTypeId = number & { readonly __kakaoMapTypeId: unique symbol };
+    const MapTypeId: {
+      ROADMAP: MapTypeId;
+      SKYVIEW: MapTypeId;
+      HYBRID: MapTypeId;
+    };
 
-    class LatLngBounds {
-      constructor();
-      extend(latlng: LatLng): void;
-    }
-
-    class Marker {
+    class Polyline {
       constructor(options: {
-        position: LatLng;
         map?: Map;
-        image?: MarkerImage;
-        title?: string;
+        path: LatLng[];
+        strokeWeight?: number;
+        strokeColor?: string;
+        strokeOpacity?: number;
+        strokeStyle?: string;
         zIndex?: number;
       });
       setMap(map: Map | null): void;
-      setPosition(latlng: LatLng): void;
-    }
-
-    class MarkerImage {
-      constructor(src: string, size: Size, options?: { offset?: Point });
-    }
-
-    class Size {
-      constructor(width: number, height: number);
-    }
-
-    class Point {
-      constructor(x: number, y: number);
-      x: number;
-      y: number;
+      getLength(): number;
     }
 
     class CustomOverlay {
@@ -70,34 +71,15 @@ declare global {
         zIndex?: number;
       });
       setMap(map: Map | null): void;
+      setPosition(latlng: LatLng): void;
     }
 
     namespace event {
-      function addListener(target: object, type: string, handler: (...args: unknown[]) => void): void;
-    }
-
-    namespace services {
-      // 장소/주소 검색 (SDK 로드 시 &libraries=services 필요, useKakaoLoader.ts에서 이미 포함)
-      enum Status {
-        OK = "OK",
-        ZERO_RESULT = "ZERO_RESULT",
-        ERROR = "ERROR",
-      }
-
-      interface PlacesSearchResultItem {
-        place_name: string;
-        address_name: string;
-        road_address_name: string;
-        x: string; // lng (문자열로 내려옴)
-        y: string; // lat
-      }
-
-      class Places {
-        keywordSearch(
-          keyword: string,
-          callback: (data: PlacesSearchResultItem[], status: Status) => void
-        ): void;
-      }
+      function addListener(
+        target: object,
+        type: string,
+        handler: (...args: unknown[]) => void
+      ): void;
     }
   }
 }

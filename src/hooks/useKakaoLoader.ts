@@ -31,7 +31,7 @@ export function useKakaoLoader(): Status {
     const script = document.createElement("script");
     script.id = "kakao-sdk";
     script.async = true;
-    script.src = `${SDK_URL}?autoload=false&appkey=${key}&libraries=services`;
+    script.src = `${SDK_URL}?autoload=false&appkey=${key}`;
     script.addEventListener("load", onLoad);
     script.addEventListener("error", () => setStatus("error"));
     document.head.appendChild(script);

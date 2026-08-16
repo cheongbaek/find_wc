@@ -9,17 +9,9 @@ dist-ssr/
 # env (절대 커밋 금지 — API 키 포함)
 .env
 
-# 대용량 원본/중간 데이터 (필요 시 별도 보관)
-공중화장실정보.csv
-data/공중화장실정보_utf8.csv
-data/geocoded.jsonl
-data/geocode_failed.jsonl
-
-# 참고용 원본 문서 (앱 실행에 불필요)
-*.hwpx
-
-# 대외 제안서 등 로컬 전용 문서 (공개 저장소에 올리지 않음)
-제안서_*.md
+# 궤적 원본 데이터 (용량이 크고 주행마다 달라진다 — 저장소에 넣지 않는다)
+*.csv
+!docs/**/*.csv
 
 # editor
 .vscode/*

@@ -1,40 +1,36 @@
-# 화장실SOS (RestroomMap)
+# 궤적 비교 (traj-compare)
 
-긴급 상황에서 가장 가까운 공공화장실을 찾는 모바일 PWA.
+사전 매핑 궤적 CSV와 실제 주행 궤적 CSV를 카카오 위성지도 위에 겹쳐 보는 웹 앱.
 
 ## 스택
-- Vite + React + TypeScript + vite-plugin-pwa
-- 지도: 카카오맵 JS SDK (JavaScript 키는 .env의 `VITE_KAKAO_JS_KEY`, 커밋 금지)
-- 데이터: `public/tiles/{geohash}.json` 정적 파일 (`scripts/build-tiles.mjs`로 생성)
-- 지오코딩(빌드 타임): `scripts/geocode.mjs` (카카오 REST 키 우선, VWorld 폴백)
+- Vite + React + TypeScript (백엔드 없음, 의존성 최소)
+- 지도: 카카오맵 JS SDK — JavaScript 키는 `.env`의 `VITE_KAKAO_JS_KEY` (커밋 금지)
+- 위성: `kakao.maps.MapTypeId.SKYVIEW`, 도로 오버레이는 `HYBRID`
 
 ## 원칙
-- 긴급용 앱: 실행 → 안내시작까지 터치 2번 이내 유지
-- 모바일 우선, 터치 타깃 최소 48px, 고대비
-- 백엔드 없음(버전1). 서버가 필요한 기능은 제안하지 말 것 (버전2에서 도입 예정)
-- 위치 데이터는 기기 밖으로 전송하지 않음 (프라이버시)
-- 문자열은 i18n 구조(`src/i18n/ko.json`)로 관리 — 버전4~5 다국어 대비
-- 지도는 레이어 추상화 유지 — 추후 카카오↔OSM 교체 가능하도록
-
-## 데이터 스키마 (버전2~5 대비 필드 예약)
-- `source: "public" | "user"` — 버전2 사용자 제보 대비
-- `category: "public" | "subway" | "private"` — 버전3 지하철 대비
+- **CSV는 브라우저 밖으로 나가지 않는다.** 업로드·전송·저장 기능을 제안하지 말 것
+- 파일 유형은 **사용자에게 묻지 않고 열 이름으로 판별**한다 (`src/lib/csv.ts`)
+  - `latitude`/`longitude` → 매핑, `fix_lat`/`fix_lon` → 주행
+- 거리 계산은 **국소평면 근사**로 통일한다 (`x = R·Δlon·cos(lat0)`, `y = R·Δlat`).
+  원점은 매핑 궤적의 첫 점 — 모든 궤적이 같은 원점을 써야 겹쳐진다
+- 주행 기록 CSV의 **hold 중복(연속 동일 좌표)은 합친다**. 안 그러면 오차 통계가 왜곡된다
+- CSV 파싱은 **따옴표를 지켜야** 한다 (`board_status` 열에 쉼표가 들어 있다)
+- 위성 영상 위 UI라 어두운 반투명 + 흰 글씨, 선에는 어두운 테두리를 깐다
 
 ## 명령어
-- `npm run dev` — 개발 서버 (HTTPS 아님 → 위치 권한은 localhost에서 허용됨)
-- `npm run build` / `npm run preview`
-- `npm run geocode` — 주소 → 위경도 (data/geocoded.jsonl 이어쓰기, resume 지원)
-- `npm run tiles` — geocoded.jsonl + 원본 CSV → public/tiles/{geohash}.json 재생성
+- `npm run dev` — 개발 서버 (http://localhost:5173)
+- `npm run build` — `tsc --noEmit` + vite build
+- `npm run preview` — 빌드 결과 확인 (http://localhost:4173)
 
-## 개발 단계 (상세: 화장실맵_버전1_개발계획.md, 진행상황: 진행상황_인수인계.md)
-- [x] Phase 1 데이터: 지오코딩(52,274건) → 타일 생성(public/tiles, 4,356 타일)
-- [x] Phase 0 스캐폴딩 / Phase 2 지도+현재위치 / Phase 3 주변검색+리스트
-- [x] Phase 4 상세+내비 딥링크
-- [x] Phase 5 PWA오프라인·다크모드
-- [x] Phase 6 배포 (https://wc-sos.vercel.app)
-- [x] **버전1 마무리**: 산출물 정리 완료(`docs/` 폴더). 실차 GPS·딥링크 테스트만 남음
-- 앱 지도 표시엔 `.env`의 VITE_KAKAO_JS_KEY 필요 (플랫폼 키 > JavaScript 키)
+카카오 콘솔의 **플랫폼 > Web > 사이트 도메인**에 위 주소를 등록해야 지도가 뜬다.
+등록이 빠지면 지도가 회색으로만 나온다.
 
-## 정식 산출물 (docs/)
-`01_아키텍처설계서` `02_프로그램목록` `03_데이터베이스설계서` `04_사용자매뉴얼.html`
-`04_운영자매뉴얼.html` `05_버전1개발일지` `06_버전2-5_개발계획서` `07_향후계획`
+## 검증된 것 (실측 데이터 기준)
+- 매핑 383점 / 주행 3,222행 → 806점(hold 2,416행 합침)
+- 계산한 벗어난 거리 vs 차량이 기록한 `cte_m`: 최대 차이 1e-7 m — 같은 값을 재현한다
+- 창 탐색 최단거리 = 전수 탐색 결과와 완전 일치 (차이 0)
+
+## 옛 이력
+원래 공공화장실 PWA(화장실SOS)였다. 앱 코드는 제거했고 정식 산출물 문서만 `docs/`와
+루트의 `화장실맵_버전1_개발계획.md` · `진행상황_인수인계.md`에 남아 있다. 지금 앱과는
+무관하니 참고하지 말 것.
