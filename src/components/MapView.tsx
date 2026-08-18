@@ -6,7 +6,6 @@ export type ColorMode = "solid" | "err";
 
 export interface MapTrack {
   id: string;
-  label: string;
   color: string;
   pts: LatLng[];
   /** 주행 궤적일 때만 채워진다 — 각 점의 매핑 궤적까지의 거리 [m] */
@@ -100,7 +99,7 @@ export default function MapView({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const { LatLng, Polyline, CustomOverlay } = window.kakao.maps;
+    const { LatLng, Polyline } = window.kakao.maps;
 
     drawnRef.current.forEach((obj) => obj.setMap(null));
     drawnRef.current = [];
@@ -133,20 +132,6 @@ export default function MapView({
       } else {
         line(track.pts, track.color, 4, 0.95, base + 1);
       }
-
-      const pin = (p: LatLng, text: string, radius: string) =>
-        keep(
-          new CustomOverlay({
-            map,
-            position: new LatLng(p.lat, p.lng),
-            content: `<div class="pin" style="background:${track.color};border-radius:${radius}">${text}</div>`,
-            yAnchor: 0.5,
-            xAnchor: 0.5,
-            zIndex: base + 2,
-          })
-        );
-      pin(track.pts[0], `${track.label} 시작`, "999px");
-      pin(track.pts[track.pts.length - 1], `${track.label} 끝`, "4px");
     });
   }, [tracks, colorMode, errMax]);
 

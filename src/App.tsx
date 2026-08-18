@@ -195,7 +195,6 @@ export default function App() {
     if (!analysis) return [];
     return analysis.visible.map((track) => ({
       id: track.id,
-      label: KIND_LABEL[track.parsed.kind],
       color: track.color,
       pts: track.parsed.pts,
       err: analysis.errors.get(track.id) ?? null,
