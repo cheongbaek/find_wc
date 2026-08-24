@@ -322,7 +322,7 @@ button.danger:hover {
 .profile {
   display: block;
   width: 100%;
-  height: 76px;
+  height: 88px;
   margin-bottom: 4px;
   background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
@@ -352,6 +352,30 @@ button.danger:hover {
 .profile text {
   fill: #9fb0c8;
   font-size: 9px;
+}
+
+/* RTK 범례 — 지도와 같은 규칙(밝으면 RTK, 어두우면 아님)을 글로 못 박는다 */
+.legend.rtk {
+  gap: 5px;
+}
+
+.legend .sw {
+  flex: none;
+  width: 16px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+.legend .sw.on {
+  background: hsl(150 55% 52%);
+}
+
+.legend .sw.off {
+  background: hsl(150 16% 34%);
+}
+
+.legend .sw + span {
+  margin-right: 8px;
 }
 
 .readout {

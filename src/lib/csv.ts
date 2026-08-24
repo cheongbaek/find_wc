@@ -1,4 +1,4 @@
-// CSV 읽기 + ★파일 유형 자동 판별★
+// CSV 읽기 + ★파일 유형 자동 판별★ + ★RTK 여부 판정★
 //
 // 두 가지 CSV 를 받는다. 사용자가 어느 쪽인지 고를 필요 없이 ★열 이름을 보고★ 정한다.
 //   · 매핑 CSV (mapping.py 산출물, gps_data/route_*.csv) : latitude, longitude
@@ -23,10 +23,32 @@ const EXTRA_COLUMNS = {
   speed: ["speed_kmh", "speed"],
   cte: ["cte_m", "cte"],
   heading: ["heading", "ego_heading_deg"],
+  sigma: ["gps_sigma_m"],
+  cov: ["fix_cov_xx"],
 } as const;
 
 export type ExtraName = keyof typeof EXTRA_COLUMNS;
 export type Extras = Partial<Record<ExtraName, (number | null)[]>>;
+
+/**
+ * ★이 표준편차 이하면 RTK 고정으로 본다 [m]★
+ * RTK Fixed 는 보통 1~3 cm, Float 이나 단독측위로 떨어지면 수십 cm~수 m 다.
+ * 실측 데이터는 σ 가 1.0~1.4 cm 아니면 2.1~2.6 m 로 뚜렷하게 둘로 갈렸다 —
+ * 그 사이(5~50 cm)에 걸친 점이 하나도 없었으므로 경계값 선택이 결과를 바꾸지 않는다.
+ */
+export const RTK_SIGMA_M = 0.1;
+
+/**
+ * RTK 판정에 쓸 열 후보 — ★앞에 있는 것부터★ 쓸 수 있는지 본다.
+ *
+ * gps_quality  : /gps_fused 쪽 판정 결과. 있으면 이게 가장 정확하다.
+ * gps_sigma_m  : gps.py _classify() 가 x·y 두 축을 모두 보고 낸 σ. GST 효과가 온전히 반영된다.
+ * fix_cov_xx   : /fix 의 position_covariance[0](경도축)뿐이라 반쪽이지만,
+ *                GST 가 오면 드라이버가 lon_std_dev 로 대체해 넣으므로 실질적으로 쓸 만하다.
+ * fix_status   : NavSatStatus. 드라이버가 RTK 를 STATUS_GBAS_FIX(2) 하나로 뭉뚱그리는 일이 많아
+ *                ★값이 한 종류뿐이면 판정에 쓰지 않는다★ (실측 파일이 정확히 그랬다).
+ */
+const RTK_SOURCES = ["gps_quality", "gps_sigma_m", "fix_cov_xx", "fix_status"] as const;
 
 export interface ParsedTrack {
   kind: TrackKind;
@@ -35,6 +57,12 @@ export interface ParsedTrack {
   lonColumn: string;
   pts: LatLng[];
   extras: Extras;
+  /** 점마다 RTK 고정이었는지. 판정할 근거가 없으면 null */
+  rtk: boolean[] | null;
+  /** 무엇으로 판정했는지 — 근거를 감추지 않는다 */
+  rtkSource: string | null;
+  /** 판정을 못 했다면 그 이유 */
+  rtkNote: string | null;
   totalRows: number;
   /** 값이 비었거나 (0,0) 이라 버린 행 수 */
   skippedRows: number;
@@ -102,6 +130,77 @@ function isUsable(lat: number | null, lon: number | null): lat is number {
   return Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
 }
 
+interface RtkVerdict {
+  rtk: boolean[] | null;
+  rtkSource: string | null;
+  rtkNote: string | null;
+}
+
+/** 한 후보 열의 원본 문자열들로 RTK 여부를 판정한다. 못 쓰면 null 을 돌려준다. */
+function classify(column: string, raw: string[]): RtkVerdict | null {
+  const key = column.toLowerCase();
+
+  if (key === "gps_quality") {
+    // 숫자면 NMEA GGA 품질(4=RTK 고정, 5=Float), 글자면 드라이버가 붙인 이름
+    const flags = raw.map((value) => {
+      const text = value.trim().toUpperCase();
+      if (!text) return false;
+      const n = Number(text);
+      if (Number.isFinite(n)) return n === 4;
+      return text.includes("FIX") && !text.includes("FLOAT");
+    });
+    return { rtk: flags, rtkSource: `${column} (4=RTK 고정)`, rtkNote: null };
+  }
+
+  if (key === "gps_sigma_m" || key === "fix_cov_xx") {
+    // fix_cov_xx 는 분산이므로 제곱근을 취해야 표준편차가 된다
+    const sigma = raw.map((value) => {
+      const n = toNumber(value);
+      if (n === null || n < 0) return NaN;
+      return key === "fix_cov_xx" ? Math.sqrt(n) : n;
+    });
+    if (!sigma.some(Number.isFinite)) return null;
+    return {
+      rtk: sigma.map((s) => Number.isFinite(s) && s <= RTK_SIGMA_M),
+      rtkSource: `${column} (σ ≤ ${RTK_SIGMA_M} m)`,
+      rtkNote: null,
+    };
+  }
+
+  // fix_status: 값이 한 종류뿐이면 구간이 갈리지 않는다 — 판정에 쓰지 않는다
+  const distinct = new Set(raw.map((v) => v.trim()).filter(Boolean));
+  if (distinct.size < 2) {
+    return {
+      rtk: null,
+      rtkSource: null,
+      rtkNote:
+        `${column} 가 전 구간 ${[...distinct][0] ?? "빈값"} 으로 고정이라 RTK 구분에 쓸 수 없습니다. ` +
+        `드라이버가 RTK 를 NavSatStatus 한 값으로 뭉뚱그린 경우입니다.`,
+    };
+  }
+  // 갈리는 경우: NMEA GGA 4=RTK 고정, NavSatStatus 2=STATUS_GBAS_FIX
+  return {
+    rtk: raw.map((value) => {
+      const n = toNumber(value);
+      return n === 4 || n === 2;
+    }),
+    rtkSource: `${column} (2/4 를 RTK 로 봄)`,
+    rtkNote: null,
+  };
+}
+
+function decideRtk(collected: Map<string, string[]>): RtkVerdict {
+  let note: string | null = null;
+  for (const name of RTK_SOURCES) {
+    const raw = collected.get(name);
+    if (!raw || !raw.length) continue;
+    const verdict = classify(name, raw);
+    if (verdict?.rtk) return verdict;
+    if (verdict?.rtkNote && !note) note = verdict.rtkNote; // 첫 번째 실패 사유만 알린다
+  }
+  return { rtk: null, rtkSource: null, rtkNote: note };
+}
+
 export function parseTrackCsv(text: string): ParsedTrack {
   const rows = splitCsv(text.replace(/^﻿/, "")); // 엑셀이 붙이는 BOM 제거
   if (!rows.length) throw new Error("빈 파일입니다.");
@@ -145,10 +244,15 @@ export function parseTrackCsv(text: string): ParsedTrack {
     })
     .filter((entry): entry is readonly [ExtraName, number] => entry !== null);
 
+  const rtkIdx = RTK_SOURCES.map((name) => ({ name, idx: index.get(name) })).filter(
+    (entry): entry is { name: (typeof RTK_SOURCES)[number]; idx: number } => entry.idx !== undefined
+  );
+
   // ── 본문 ──────────────────────────────────────────────────────────────
   const pts: LatLng[] = [];
   const extras: Extras = {};
   extraIdx.forEach(([name]) => (extras[name] = []));
+  const rtkRaw = new Map<string, string[]>(rtkIdx.map((entry) => [entry.name, []]));
   let skipped = 0;
   let merged = 0;
 
@@ -171,9 +275,12 @@ export function parseTrackCsv(text: string): ParsedTrack {
     }
     pts.push({ lat, lng: lon as number });
     for (const [name, idx] of extraIdx) extras[name]!.push(toNumber(row[idx]));
+    for (const entry of rtkIdx) rtkRaw.get(entry.name)!.push(row[entry.idx] ?? "");
   }
 
   if (!pts.length) throw new Error("쓸 수 있는 위경도 행이 하나도 없습니다.");
+
+  const verdict = decideRtk(rtkRaw);
 
   return {
     kind,
@@ -181,6 +288,9 @@ export function parseTrackCsv(text: string): ParsedTrack {
     lonColumn: header[lonIdx],
     pts,
     extras,
+    rtk: verdict.rtk,
+    rtkSource: verdict.rtkSource,
+    rtkNote: verdict.rtkNote,
     totalRows: rows.length - 1,
     skippedRows: skipped,
     mergedRows: merged,

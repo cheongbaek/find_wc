@@ -198,6 +198,7 @@ export default function App() {
       color: track.color,
       pts: track.parsed.pts,
       err: analysis.errors.get(track.id) ?? null,
+      rtk: track.parsed.rtk,
     }));
   }, [analysis]);
 
@@ -261,6 +262,35 @@ export default function App() {
       ],
     });
 
+    // GPS 품질 — 오차가 제어 탓인지 GPS 탓인지 가르는 근거다.
+    const rtk = target.track.parsed.rtk;
+    if (rtk) {
+      const on = rtk.filter(Boolean).length;
+      let segments = 0;
+      let offDistance = 0;
+      for (let i = 0; i < rtk.length; i++) {
+        if (!rtk[i] && (i === 0 || rtk[i - 1])) segments++;
+        if (!rtk[i] && i > 0) offDistance += target.dist[i] - target.dist[i - 1];
+      }
+      const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length;
+      const errOn = target.err.filter((_, i) => rtk[i]);
+      const errOff = target.err.filter((_, i) => !rtk[i]);
+      out.push({
+        title: `GPS 품질 — 판정 근거 ${target.track.parsed.rtkSource}`,
+        rows: [
+          {
+            label: "RTK 고정",
+            value: `${fmt((on / rtk.length) * 100, 1)}% (${on.toLocaleString()}/${rtk.length.toLocaleString()}점)`,
+          },
+          { label: "RTK 아닌 구간", value: `${segments}곳 · ${fmt(offDistance, 1)} m` },
+          ...(errOn.length ? [{ label: "RTK 구간 평균 오차", value: `${fmt(mean(errOn))} m` }] : []),
+          ...(errOff.length
+            ? [{ label: "비RTK 구간 평균 오차", value: `${fmt(mean(errOff))} m` }]
+            : []),
+        ],
+      });
+    }
+
     // 주행 기록에 차량이 스스로 계산해 남긴 횡오차(cte_m)가 있으면 대조한다.
     // 여기 화면이 계산한 값과 맞아떨어지면 "이 그림을 믿어도 된다"는 근거가 된다.
     const cte = target.track.parsed.extras.cte;
@@ -295,12 +325,19 @@ export default function App() {
 
   const readout = (() => {
     if (!target || hoverIdx == null) return "그래프에 마우스를 올리면 그 지점이 지도에 표시됩니다.";
-    const { extras } = target.track.parsed;
+    const { extras, rtk } = target.track.parsed;
     const parts = [`벗어남 ${fmt(target.err[hoverIdx])} m`, `${fmt(target.dist[hoverIdx], 0)} m 지점`];
     const t = extras.t?.[hoverIdx];
     const speed = extras.speed?.[hoverIdx];
     if (t != null) parts.push(`t=${fmt(t, 1)} s`);
     if (speed != null) parts.push(`${fmt(speed, 1)} km/h`);
+    if (rtk) parts.push(rtk[hoverIdx] ? "RTK 고정" : "RTK 아님");
+    // fix_cov_xx 는 분산이라 제곱근을 취해야 표준편차가 된다
+    const cov = extras.cov?.[hoverIdx];
+    const sigma = extras.sigma?.[hoverIdx] ?? (cov != null && cov >= 0 ? Math.sqrt(cov) : null);
+    if (sigma != null) {
+      parts.push(sigma < 1 ? `σ ${fmt(sigma * 100, 1)} cm` : `σ ${fmt(sigma)} m`);
+    }
     return parts.join(" · ");
   })();
 
@@ -465,9 +502,21 @@ export default function App() {
                 err={target.err}
                 dist={target.dist}
                 errMax={errMax}
+                rtk={target.track.parsed.rtk}
                 hoverIdx={hoverIdx}
                 onHover={setHoverIdx}
               />
+              {target.track.parsed.rtk && (
+                <div className="legend rtk">
+                  <i className="sw on" />
+                  <span>RTK 고정 (밝게)</span>
+                  <i className="sw off" />
+                  <span>RTK 아님 (어둡게)</span>
+                </div>
+              )}
+              {target.track.parsed.rtkNote && (
+                <p className="note warn">{target.track.parsed.rtkNote}</p>
+              )}
               <p className="readout">{readout}</p>
             </>
           )}

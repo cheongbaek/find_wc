@@ -10,6 +10,8 @@ export interface MapTrack {
   pts: LatLng[];
   /** 주행 궤적일 때만 채워진다 — 각 점의 매핑 궤적까지의 거리 [m] */
   err: number[] | null;
+  /** 점마다 RTK 고정이었는지. 없으면 밝기 구분을 하지 않는다 */
+  rtk: boolean[] | null;
 }
 
 interface Props {
@@ -28,27 +30,66 @@ interface Props {
 /** 오차 색을 몇 단계로 끊을지 — 너무 잘게 나누면 선 조각이 수천 개가 된다 */
 const ERR_STEPS = 16;
 
+/** RTK 가 아닌 구간을 얼마나 어둡게 깔지 (0=검정, 1=그대로) */
+const DIM = 0.42;
+
 interface Removable {
   setMap(map: kakao.maps.Map | null): void;
 }
 
 /**
- * 오차 색 모드에서는 한 궤적을 ★색이 같은 구간(run)★ 단위로 잘라 그린다.
+ * RTK 가 아닌 구간용 어두운 색.
+ * 명도만 낮추면 위성 영상 위에서 탁하게 보여, 채도도 함께 낮춰 ★죽은 색★ 으로 만든다.
+ * errColor 가 내는 hsl() 과 궤적 기본색인 #rrggbb 를 모두 받는다.
+ */
+function darken(color: string): string {
+  const hsl = /^hsl\((\d+(?:\.\d+)?) (\d+)% (\d+)%\)$/.exec(color);
+  if (hsl) {
+    return `hsl(${hsl[1]} ${Math.round(Number(hsl[2]) * 0.6)}% ${Math.round(Number(hsl[3]) * DIM)}%)`;
+  }
+  const hex = /^#([0-9a-fA-F]{6})$/.exec(color);
+  if (!hex) return color;
+  const n = parseInt(hex[1], 16);
+  const parts = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v * DIM));
+  return `#${parts.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * 점마다 색을 정한다.
+ * - 오차 색 모드: 벗어난 거리를 단계로 끊어 초록→빨강
+ * - 단색 모드   : 궤적 고유색
+ * 그리고 ★RTK 가 아닌 점은 어둡게★ — 밝으면 RTK 고정, 어두우면 아니다.
+ */
+function colorPicker(track: MapTrack, colorMode: ColorMode, errMax: number) {
+  const useErr = colorMode === "err" && track.err;
+  return (i: number) => {
+    let color = track.color;
+    if (useErr) {
+      // 단계로 끊어야 같은 색이 이어지고, 선 조각 수가 폭발하지 않는다
+      const level = Math.min(
+        ERR_STEPS - 1,
+        Math.floor((Math.min(track.err![i] ?? 0, errMax) / errMax) * ERR_STEPS)
+      );
+      color = errColor((level / ERR_STEPS) * errMax, errMax);
+    }
+    return track.rtk && track.rtk[i] === false ? darken(color) : color;
+  };
+}
+
+/**
+ * 색이 같은 점끼리 묶어 구간(run) 으로 자른다.
  * 구간의 끝점을 다음 구간의 시작점으로 겹쳐 넣어야 선이 끊겨 보이지 않는다.
  */
-function colorRuns(pts: LatLng[], err: number[], errMax: number) {
+function colorRuns(pts: LatLng[], colorAt: (i: number) => string) {
   const runs: { color: string; pts: LatLng[] }[] = [];
-  const level = (i: number) =>
-    Math.min(ERR_STEPS - 1, Math.floor((Math.min(err[i] ?? 0, errMax) / errMax) * ERR_STEPS));
-
   let start = 0;
+  let color = colorAt(0);
   for (let i = 1; i <= pts.length; i++) {
-    if (i === pts.length || level(i) !== level(start)) {
-      runs.push({
-        color: errColor(err[start] ?? 0, errMax),
-        pts: pts.slice(start, Math.min(i + 1, pts.length)), // 한 점 겹쳐 이어 붙인다
-      });
+    const next = i < pts.length ? colorAt(i) : null;
+    if (next !== color) {
+      runs.push({ color, pts: pts.slice(start, Math.min(i + 1, pts.length)) });
       start = i;
+      if (next !== null) color = next;
     }
   }
   return runs;
@@ -125,13 +166,9 @@ export default function MapView({
       // 위성 영상은 배경이 제각각이라 선만 그리면 묻힌다 — 어두운 테두리를 깔아 준다
       line(track.pts, "#000000", 7, 0.45, base);
 
-      if (colorMode === "err" && track.err) {
-        colorRuns(track.pts, track.err, errMax).forEach((run) => {
-          if (run.pts.length >= 2) line(run.pts, run.color, 4, 0.95, base + 1);
-        });
-      } else {
-        line(track.pts, track.color, 4, 0.95, base + 1);
-      }
+      colorRuns(track.pts, colorPicker(track, colorMode, errMax)).forEach((run) => {
+        if (run.pts.length >= 2) line(run.pts, run.color, 4, 0.95, base + 1);
+      });
     });
   }, [tracks, colorMode, errMax]);
 
