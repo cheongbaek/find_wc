@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { Quality } from "../lib/csv";
 import { errColor, type LatLng } from "../lib/geo";
 
 export type MapType = "sat" | "hybrid" | "road";
@@ -10,8 +11,8 @@ export interface MapTrack {
   pts: LatLng[];
   /** 주행 궤적일 때만 채워진다 — 각 점의 매핑 궤적까지의 거리 [m] */
   err: number[] | null;
-  /** 점마다 RTK 고정이었는지. 없으면 밝기 구분을 하지 않는다 */
-  rtk: boolean[] | null;
+  /** 점마다의 GPS 정밀도 등급. 없으면 밝기 구분을 하지 않는다 */
+  quality: Quality[] | null;
 }
 
 interface Props {
@@ -30,27 +31,32 @@ interface Props {
 /** 오차 색을 몇 단계로 끊을지 — 너무 잘게 나누면 선 조각이 수천 개가 된다 */
 const ERR_STEPS = 16;
 
-/** RTK 가 아닌 구간을 얼마나 어둡게 깔지 (0=검정, 1=그대로) */
-const DIM = 0.42;
+/**
+ * 등급별 밝기 (0=검정, 1=그대로).
+ * ★정밀할수록 밝다★ — 지도와 아래 띠가 같은 규칙을 쓴다.
+ */
+const LEVEL_DIM: Record<Quality, number> = { high: 1, mid: 0.7, low: 0.4 };
 
 interface Removable {
   setMap(map: kakao.maps.Map | null): void;
 }
 
 /**
- * RTK 가 아닌 구간용 어두운 색.
+ * 정밀도가 낮은 구간용 어두운 색.
  * 명도만 낮추면 위성 영상 위에서 탁하게 보여, 채도도 함께 낮춰 ★죽은 색★ 으로 만든다.
  * errColor 가 내는 hsl() 과 궤적 기본색인 #rrggbb 를 모두 받는다.
  */
-function darken(color: string): string {
+function darken(color: string, dim: number): string {
+  if (dim >= 1) return color;
   const hsl = /^hsl\((\d+(?:\.\d+)?) (\d+)% (\d+)%\)$/.exec(color);
   if (hsl) {
-    return `hsl(${hsl[1]} ${Math.round(Number(hsl[2]) * 0.6)}% ${Math.round(Number(hsl[3]) * DIM)}%)`;
+    const sat = Math.round(Number(hsl[2]) * (0.4 + 0.6 * dim));
+    return `hsl(${hsl[1]} ${sat}% ${Math.round(Number(hsl[3]) * dim)}%)`;
   }
   const hex = /^#([0-9a-fA-F]{6})$/.exec(color);
   if (!hex) return color;
   const n = parseInt(hex[1], 16);
-  const parts = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v * DIM));
+  const parts = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v * dim));
   return `#${parts.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -58,7 +64,7 @@ function darken(color: string): string {
  * 점마다 색을 정한다.
  * - 오차 색 모드: 벗어난 거리를 단계로 끊어 초록→빨강
  * - 단색 모드   : 궤적 고유색
- * 그리고 ★RTK 가 아닌 점은 어둡게★ — 밝으면 RTK 고정, 어두우면 아니다.
+ * 그리고 ★GPS 정밀도가 낮은 점일수록 어둡게★ — 밝으면 RTK 고정급이다.
  */
 function colorPicker(track: MapTrack, colorMode: ColorMode, errMax: number) {
   const useErr = colorMode === "err" && track.err;
@@ -72,7 +78,8 @@ function colorPicker(track: MapTrack, colorMode: ColorMode, errMax: number) {
       );
       color = errColor((level / ERR_STEPS) * errMax, errMax);
     }
-    return track.rtk && track.rtk[i] === false ? darken(color) : color;
+    const level = track.quality?.[i];
+    return level ? darken(color, LEVEL_DIM[level]) : color;
   };
 }
 

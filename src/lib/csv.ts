@@ -31,24 +31,38 @@ export type ExtraName = keyof typeof EXTRA_COLUMNS;
 export type Extras = Partial<Record<ExtraName, (number | null)[]>>;
 
 /**
- * ★이 표준편차 이하면 RTK 고정으로 본다 [m]★
- * RTK Fixed 는 보통 1~3 cm, Float 이나 단독측위로 떨어지면 수십 cm~수 m 다.
- * 실측 데이터는 σ 가 1.0~1.4 cm 아니면 2.1~2.6 m 로 뚜렷하게 둘로 갈렸다 —
- * 그 사이(5~50 cm)에 걸친 점이 하나도 없었으므로 경계값 선택이 결과를 바꾸지 않는다.
+ * ★GPS 정밀도 등급★ — 밝기로 표현한다. 높을수록 밝다.
+ *
+ * 이진(RTK냐 아니냐)으로는 실측 파일들의 차이가 드러나지 않았다. 어떤 주행은
+ * σ 가 1.1 cm(RTK 고정)와 2.2 m 사이를 오갔고, 다른 주행은 전 구간 5~15 cm 였다.
+ * 후자를 "RTK 아님" 한 덩어리로 칠하면 정작 볼 것이 사라진다.
  */
-export const RTK_SIGMA_M = 0.1;
+export type Quality = "high" | "mid" | "low";
+
+/** 등급 경계 [m] — RTK 고정은 보통 1~3 cm, Float·DGPS 는 10 cm~1 m 다 */
+export const SIGMA_HIGH = 0.05;
+export const SIGMA_MID = 0.3;
+
+export const QUALITY_LABEL: Record<Quality, string> = {
+  high: `RTK 고정급 (σ ≤ ${SIGMA_HIGH * 100} cm)`,
+  mid: `중간 (σ ≤ ${SIGMA_MID * 100} cm)`,
+  low: `낮음 (σ > ${SIGMA_MID * 100} cm)`,
+};
 
 /**
- * RTK 판정에 쓸 열 후보 — ★앞에 있는 것부터★ 쓸 수 있는지 본다.
+ * 정밀도 판정에 쓸 열 후보 — ★앞에 있는 것부터★ 쓸 수 있는지 본다.
  *
- * gps_quality  : /gps_fused 쪽 판정 결과. 있으면 이게 가장 정확하다.
- * gps_sigma_m  : gps.py _classify() 가 x·y 두 축을 모두 보고 낸 σ. GST 효과가 온전히 반영된다.
- * fix_cov_xx   : /fix 의 position_covariance[0](경도축)뿐이라 반쪽이지만,
- *                GST 가 오면 드라이버가 lon_std_dev 로 대체해 넣으므로 실질적으로 쓸 만하다.
- * fix_status   : NavSatStatus. 드라이버가 RTK 를 STATUS_GBAS_FIX(2) 하나로 뭉뚱그리는 일이 많아
- *                ★값이 한 종류뿐이면 판정에 쓰지 않는다★ (실측 파일이 정확히 그랬다).
+ * gps_sigma_m : gps.py _classify() 가 x·y 두 축을 모두 보고 낸 σ. GST 효과가 온전히 반영된다.
+ * fix_cov_xx  : /fix 의 position_covariance[0](경도축)뿐이라 반쪽이지만,
+ *               GST 가 오면 드라이버가 lon_std_dev 로 대체해 넣으므로 실질적으로 쓸 만하다.
+ * gps_quality : NMEA GGA 품질. ★4(RTK 고정)일 때만★ 최상 등급으로 끌어올리는 데 쓴다.
+ *               그 밖의 값은 드라이버마다 뜻이 달라 σ 판정을 뒤집지 않는다.
+ * fix_status  : NavSatStatus. 드라이버가 RTK 를 STATUS_GBAS_FIX(2) 하나로 뭉뚱그리는 일이 많아
+ *               ★σ 가 전혀 없을 때만, 그것도 값이 두 종류 이상일 때만★ 쓴다.
  */
-const RTK_SOURCES = ["gps_quality", "gps_sigma_m", "fix_cov_xx", "fix_status"] as const;
+const SIGMA_SOURCES = ["gps_sigma_m", "fix_cov_xx"] as const;
+const STATUS_SOURCES = ["gps_quality", "fix_status"] as const;
+const RAW_SOURCES = [...SIGMA_SOURCES, ...STATUS_SOURCES] as const;
 
 export interface ParsedTrack {
   kind: TrackKind;
@@ -57,12 +71,16 @@ export interface ParsedTrack {
   lonColumn: string;
   pts: LatLng[];
   extras: Extras;
-  /** 점마다 RTK 고정이었는지. 판정할 근거가 없으면 null */
-  rtk: boolean[] | null;
+  /** 점마다의 GPS 정밀도 등급. 판정할 근거가 없으면 null */
+  quality: Quality[] | null;
+  /** 점마다의 표준편차 [m] — 읽음줄과 그래프에 쓴다 */
+  sigma: (number | null)[] | null;
   /** 무엇으로 판정했는지 — 근거를 감추지 않는다 */
-  rtkSource: string | null;
+  qualitySource: string | null;
   /** 판정을 못 했다면 그 이유 */
-  rtkNote: string | null;
+  qualityNote: string | null;
+  /** 파일에 적힌 상태값 원본 요약 — 판정을 사용자가 직접 검증할 수 있게 그대로 보여 준다 */
+  statusSummary: string | null;
   totalRows: number;
   /** 값이 비었거나 (0,0) 이라 버린 행 수 */
   skippedRows: number;
@@ -130,75 +148,101 @@ function isUsable(lat: number | null, lon: number | null): lat is number {
   return Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
 }
 
-interface RtkVerdict {
-  rtk: boolean[] | null;
-  rtkSource: string | null;
-  rtkNote: string | null;
+interface QualityVerdict {
+  quality: Quality[] | null;
+  sigma: (number | null)[] | null;
+  qualitySource: string | null;
+  qualityNote: string | null;
 }
 
-/** 한 후보 열의 원본 문자열들로 RTK 여부를 판정한다. 못 쓰면 null 을 돌려준다. */
-function classify(column: string, raw: string[]): RtkVerdict | null {
-  const key = column.toLowerCase();
-
-  if (key === "gps_quality") {
-    // 숫자면 NMEA GGA 품질(4=RTK 고정, 5=Float), 글자면 드라이버가 붙인 이름
-    const flags = raw.map((value) => {
-      const text = value.trim().toUpperCase();
-      if (!text) return false;
-      const n = Number(text);
-      if (Number.isFinite(n)) return n === 4;
-      return text.includes("FIX") && !text.includes("FLOAT");
-    });
-    return { rtk: flags, rtkSource: `${column} (4=RTK 고정)`, rtkNote: null };
-  }
-
-  if (key === "gps_sigma_m" || key === "fix_cov_xx") {
-    // fix_cov_xx 는 분산이므로 제곱근을 취해야 표준편차가 된다
-    const sigma = raw.map((value) => {
-      const n = toNumber(value);
-      if (n === null || n < 0) return NaN;
-      return key === "fix_cov_xx" ? Math.sqrt(n) : n;
-    });
-    if (!sigma.some(Number.isFinite)) return null;
-    return {
-      rtk: sigma.map((s) => Number.isFinite(s) && s <= RTK_SIGMA_M),
-      rtkSource: `${column} (σ ≤ ${RTK_SIGMA_M} m)`,
-      rtkNote: null,
-    };
-  }
-
-  // fix_status: 값이 한 종류뿐이면 구간이 갈리지 않는다 — 판정에 쓰지 않는다
-  const distinct = new Set(raw.map((v) => v.trim()).filter(Boolean));
-  if (distinct.size < 2) {
-    return {
-      rtk: null,
-      rtkSource: null,
-      rtkNote:
-        `${column} 가 전 구간 ${[...distinct][0] ?? "빈값"} 으로 고정이라 RTK 구분에 쓸 수 없습니다. ` +
-        `드라이버가 RTK 를 NavSatStatus 한 값으로 뭉뚱그린 경우입니다.`,
-    };
-  }
-  // 갈리는 경우: NMEA GGA 4=RTK 고정, NavSatStatus 2=STATUS_GBAS_FIX
-  return {
-    rtk: raw.map((value) => {
-      const n = toNumber(value);
-      return n === 4 || n === 2;
-    }),
-    rtkSource: `${column} (2/4 를 RTK 로 봄)`,
-    rtkNote: null,
-  };
+/** 숫자를 보기 좋게 — "2.0" 은 "2" 로 */
+function tidy(text: string): string {
+  const n = Number(text.trim());
+  return Number.isFinite(n) ? String(n) : text.trim();
 }
 
-function decideRtk(collected: Map<string, string[]>): RtkVerdict {
-  let note: string | null = null;
-  for (const name of RTK_SOURCES) {
+/** 파일에 적힌 상태값을 한 줄로 요약한다 (값이 여러 종류면 모두 나열) */
+function summarize(collected: Map<string, string[]>): string | null {
+  const parts: string[] = [];
+  for (const name of STATUS_SOURCES) {
     const raw = collected.get(name);
-    if (!raw || !raw.length) continue;
-    const verdict = classify(name, raw);
-    if (verdict?.rtk) return verdict;
-    if (verdict?.rtkNote && !note) note = verdict.rtkNote; // 첫 번째 실패 사유만 알린다
+    if (!raw?.length) continue;
+    const distinct = [...new Set(raw.map(tidy).filter(Boolean))];
+    parts.push(`${name}=${distinct.slice(0, 4).join("/")}${distinct.length > 4 ? "…" : ""}`);
   }
-  return { rtk: null, rtkSource: null, rtkNote: note };
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function levelOf(sigma: number): Quality {
+  if (sigma <= SIGMA_HIGH) return "high";
+  if (sigma <= SIGMA_MID) return "mid";
+  return "low";
+}
+
+function decideQuality(collected: Map<string, string[]>, count: number): QualityVerdict {
+  // ① σ 를 낼 수 있는 열을 먼저 찾는다 — 연속값이라 등급을 나눌 수 있다
+  for (const name of SIGMA_SOURCES) {
+    const raw = collected.get(name);
+    if (!raw?.length) continue;
+    const sigma = raw.map((value) => {
+      const n = Number(value.trim());
+      if (!Number.isFinite(n) || n < 0) return null;
+      // fix_cov_xx 는 분산이므로 제곱근을 취해야 표준편차가 된다
+      return name === "fix_cov_xx" ? Math.sqrt(n) : n;
+    });
+    if (!sigma.some((v) => v !== null)) continue;
+
+    // gps_quality 가 4(RTK 고정) 라고 말하면 그것만은 최상 등급으로 끌어올린다
+    const ggaRaw = collected.get("gps_quality");
+    const quality = sigma.map((v, i) => {
+      if (ggaRaw && Number(ggaRaw[i]) === 4) return "high" as Quality;
+      return v === null ? "low" : levelOf(v);
+    });
+    const upgraded = ggaRaw?.some((v) => Number(v) === 4);
+    return {
+      quality,
+      sigma,
+      qualitySource: `${name}${upgraded ? " + gps_quality=4" : ""}`,
+      qualityNote: null,
+    };
+  }
+
+  // ② σ 가 없으면 상태 코드로 내려간다 — 값이 한 종류뿐이면 구간이 갈리지 않는다
+  for (const name of STATUS_SOURCES) {
+    const raw = collected.get(name);
+    if (!raw?.length) continue;
+    const distinct = new Set(raw.map(tidy).filter(Boolean));
+    if (distinct.size < 2) {
+      return {
+        quality: null,
+        sigma: null,
+        qualitySource: null,
+        qualityNote:
+          `정밀도(σ) 열이 없고 ${name} 는 전 구간 ${[...distinct][0] ?? "빈값"} 으로 고정이라 ` +
+          `구간을 나눌 수 없습니다. gps_sigma_m 이나 fix_cov_xx 를 함께 기록하면 등급이 나옵니다.`,
+      };
+    }
+    // NMEA GGA 4=RTK 고정 / 5=Float, NavSatStatus 2=STATUS_GBAS_FIX
+    return {
+      quality: raw.map((value) => {
+        const n = Number(value.trim());
+        if (n === 4 || n === 2) return "high";
+        return n === 5 ? "mid" : "low";
+      }),
+      sigma: null,
+      qualitySource: `${name} (4/2=고정, 5=Float)`,
+      qualityNote: null,
+    };
+  }
+
+  return {
+    quality: null,
+    sigma: null,
+    qualitySource: null,
+    qualityNote: count
+      ? "GPS 정밀도·상태 열이 없어 품질을 표시하지 않습니다."
+      : null,
+  };
 }
 
 export function parseTrackCsv(text: string): ParsedTrack {
@@ -244,15 +288,15 @@ export function parseTrackCsv(text: string): ParsedTrack {
     })
     .filter((entry): entry is readonly [ExtraName, number] => entry !== null);
 
-  const rtkIdx = RTK_SOURCES.map((name) => ({ name, idx: index.get(name) })).filter(
-    (entry): entry is { name: (typeof RTK_SOURCES)[number]; idx: number } => entry.idx !== undefined
+  const statusIdx = RAW_SOURCES.map((name) => ({ name, idx: index.get(name) })).filter(
+    (entry): entry is { name: (typeof RAW_SOURCES)[number]; idx: number } => entry.idx !== undefined
   );
 
   // ── 본문 ──────────────────────────────────────────────────────────────
   const pts: LatLng[] = [];
   const extras: Extras = {};
   extraIdx.forEach(([name]) => (extras[name] = []));
-  const rtkRaw = new Map<string, string[]>(rtkIdx.map((entry) => [entry.name, []]));
+  const statusRaw = new Map<string, string[]>(statusIdx.map((entry) => [entry.name, []]));
   let skipped = 0;
   let merged = 0;
 
@@ -275,12 +319,12 @@ export function parseTrackCsv(text: string): ParsedTrack {
     }
     pts.push({ lat, lng: lon as number });
     for (const [name, idx] of extraIdx) extras[name]!.push(toNumber(row[idx]));
-    for (const entry of rtkIdx) rtkRaw.get(entry.name)!.push(row[entry.idx] ?? "");
+    for (const entry of statusIdx) statusRaw.get(entry.name)!.push(row[entry.idx] ?? "");
   }
 
   if (!pts.length) throw new Error("쓸 수 있는 위경도 행이 하나도 없습니다.");
 
-  const verdict = decideRtk(rtkRaw);
+  const verdict = decideQuality(statusRaw, pts.length);
 
   return {
     kind,
@@ -288,9 +332,11 @@ export function parseTrackCsv(text: string): ParsedTrack {
     lonColumn: header[lonIdx],
     pts,
     extras,
-    rtk: verdict.rtk,
-    rtkSource: verdict.rtkSource,
-    rtkNote: verdict.rtkNote,
+    quality: verdict.quality,
+    sigma: verdict.sigma,
+    qualitySource: verdict.qualitySource,
+    qualityNote: verdict.qualityNote,
+    statusSummary: summarize(statusRaw),
     totalRows: rows.length - 1,
     skippedRows: skipped,
     mergedRows: merged,

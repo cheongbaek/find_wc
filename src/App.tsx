@@ -4,7 +4,13 @@ import MapView, { type ColorMode, type MapTrack, type MapType } from "./componen
 import StatsPanel, { type StatSection } from "./components/StatsPanel";
 import TrackList, { type TrackRow } from "./components/TrackList";
 import { useKakaoLoader } from "./hooks/useKakaoLoader";
-import { KIND_LABEL, readTrackFile, type ParsedTrack } from "./lib/csv";
+import {
+  KIND_LABEL,
+  QUALITY_LABEL,
+  readTrackFile,
+  type ParsedTrack,
+  type Quality,
+} from "./lib/csv";
 import {
   crossTrack,
   cumulative,
@@ -26,7 +32,8 @@ interface Track {
 // 매핑은 파랑 계열, 주행은 빨강 계열 — 여러 판을 올려도 계열로 구분된다
 const MAPPING_COLORS = ["#2f7bff", "#00c2ff", "#7c5cff"];
 const RECORD_COLORS = ["#ff3b30", "#ff9500", "#ff2d95"];
-const ERR_MAX_CHOICES = [0.5, 1, 2, 5];
+/** 오차 눈금 선택지. "auto" 는 데이터에 맞춰 스스로 정한다 */
+const ERR_MAX_CHOICES: (number | "auto")[] = ["auto", 0.5, 1, 2, 5];
 
 const fmt = (v: number, digits = 2) => v.toFixed(digits);
 
@@ -45,7 +52,7 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [mapType, setMapType] = useState<MapType>("sat");
   const [colorMode, setColorMode] = useState<ColorMode>("solid");
-  const [errMax, setErrMax] = useState(1);
+  const [errMaxChoice, setErrMaxChoice] = useState<number | "auto">(1);
   const [refId, setRefId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -176,20 +183,59 @@ export default function App() {
     return { visible, geom, ref, errors };
   }, [tracks, refId]);
 
-  // 오차 그래프 대상: 사용자가 고른 주행 궤적, 없으면 첫 주행 궤적
+  // 아래 그래프의 대상 궤적.
+  // ★매핑 기준이 없어도 잡는다★ — 주행 CSV 만 올려도 GPS 품질은 볼 수 있어야 한다.
   const target = useMemo(() => {
     if (!analysis) return null;
-    const candidates = analysis.visible.filter((t) => analysis.errors.has(t.id));
+    const measured = analysis.visible.filter((t) => analysis.errors.has(t.id));
+    const pool = measured.length
+      ? measured
+      : analysis.visible.filter((t) => t.parsed.kind !== "mapping");
+    const candidates = pool.length ? pool : analysis.visible;
     const picked = candidates.find((t) => t.id === selectedId) ?? candidates[0];
     if (!picked) return null;
-    const err = analysis.errors.get(picked.id)!;
+    const err = analysis.errors.get(picked.id) ?? null;
     return {
       track: picked,
       err,
       dist: cumulative(analysis.geom.get(picked.id)!.xy),
-      stats: quantiles(err),
+      stats: err ? quantiles(err) : null,
     };
   }, [analysis, selectedId]);
+
+  /**
+   * 오차 눈금.
+   * ★자동★ 이면 95% 값을 올림해 잡는다 — 다른 경로를 달린 기록을 얹어도 그래프가
+   * 위쪽에 붙어 뭉개지지 않는다(실측에서 15 m 오차가 1 m 눈금에 꽉 차 버렸다).
+   */
+  const errMax = useMemo(() => {
+    if (errMaxChoice !== "auto") return errMaxChoice;
+    const stats = target?.stats;
+    if (!stats) return 1;
+    return Math.max(0.1, Math.ceil(stats.p95 * 10) / 10);
+  }, [errMaxChoice, target]);
+
+  /**
+   * 그래프에 그릴 값.
+   * 매핑 기준이 있으면 ★벗어난 거리★, 없으면 ★GPS 표준편차 σ★ 를 그린다.
+   * 어느 쪽이든 아래 띠에는 정밀도 등급이 깔린다.
+   */
+  const series = useMemo(() => {
+    if (!target) return null;
+    if (target.err) {
+      return { values: target.err, max: errMax, topLabel: `${errMax} m`, kind: "err" as const };
+    }
+    const sigma = target.track.parsed.sigma;
+    if (!sigma) return null;
+    const values = sigma.map((v) => v ?? 0);
+    const peak = Math.max(...values, 0.02);
+    return {
+      values,
+      max: peak,
+      topLabel: peak < 1 ? `σ ${fmt(peak * 100, 0)} cm` : `σ ${fmt(peak)} m`,
+      kind: "sigma" as const,
+    };
+  }, [target, errMax]);
 
   const mapTracks: MapTrack[] = useMemo(() => {
     if (!analysis) return [];
@@ -198,7 +244,7 @@ export default function App() {
       color: track.color,
       pts: track.parsed.pts,
       err: analysis.errors.get(track.id) ?? null,
-      rtk: track.parsed.rtk,
+      quality: track.parsed.quality,
     }));
   }, [analysis]);
 
@@ -225,8 +271,7 @@ export default function App() {
   });
 
   const sections: StatSection[] = useMemo(() => {
-    if (!analysis || !target || !analysis.ref) return [];
-    const refGeom = analysis.geom.get(analysis.ref.id)!;
+    if (!analysis || !target) return [];
     const recGeom = analysis.geom.get(target.track.id)!;
     const out: StatSection[] = [];
 
@@ -236,7 +281,9 @@ export default function App() {
         rows: statRows(target.stats),
       });
     }
-    out.push({
+    // 매핑 기준이 있을 때만 낼 수 있는 것들
+    const refGeom = analysis.ref ? analysis.geom.get(analysis.ref.id)! : null;
+    if (refGeom) out.push({
       title: "궤적 비교",
       rows: [
         { label: "매핑 길이", value: `${fmt(refGeom.lengthM, 1)} m` },
@@ -263,45 +310,54 @@ export default function App() {
     });
 
     // GPS 품질 — 오차가 제어 탓인지 GPS 탓인지 가르는 근거다.
-    const rtk = target.track.parsed.rtk;
-    if (rtk) {
-      const on = rtk.filter(Boolean).length;
-      let segments = 0;
-      let offDistance = 0;
-      for (let i = 0; i < rtk.length; i++) {
-        if (!rtk[i] && (i === 0 || rtk[i - 1])) segments++;
-        if (!rtk[i] && i > 0) offDistance += target.dist[i] - target.dist[i - 1];
-      }
+    const { quality, qualitySource, statusSummary, sigma } = target.track.parsed;
+    if (quality) {
       const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length;
-      const errOn = target.err.filter((_, i) => rtk[i]);
-      const errOff = target.err.filter((_, i) => !rtk[i]);
-      out.push({
-        title: `GPS 품질 — 판정 근거 ${target.track.parsed.rtkSource}`,
-        rows: [
-          {
-            label: "RTK 고정",
-            value: `${fmt((on / rtk.length) * 100, 1)}% (${on.toLocaleString()}/${rtk.length.toLocaleString()}점)`,
-          },
-          { label: "RTK 아닌 구간", value: `${segments}곳 · ${fmt(offDistance, 1)} m` },
-          ...(errOn.length ? [{ label: "RTK 구간 평균 오차", value: `${fmt(mean(errOn))} m` }] : []),
-          ...(errOff.length
-            ? [{ label: "비RTK 구간 평균 오차", value: `${fmt(mean(errOff))} m` }]
-            : []),
-        ],
+      const counts: Record<Quality, number> = { high: 0, mid: 0, low: 0 };
+      const distances: Record<Quality, number> = { high: 0, mid: 0, low: 0 };
+      quality.forEach((level, i) => {
+        counts[level]++;
+        if (i > 0) distances[level] += target.dist[i] - target.dist[i - 1];
       });
+
+      // 등급마다 한 줄 — 비율·거리에 (오차를 잴 수 있으면) 평균 오차까지 붙인다
+      const levelRows = (["high", "mid", "low"] as Quality[])
+        .filter((level) => counts[level] > 0)
+        .map((level) => {
+          const share = `${fmt((counts[level] / quality.length) * 100, 1)}% · ${fmt(distances[level], 1)} m`;
+          const picked = target.err?.filter((_, i) => quality[i] === level) ?? [];
+          return {
+            label: QUALITY_LABEL[level],
+            value: picked.length ? `${share} · 오차 ${fmt(mean(picked))} m` : share,
+          };
+        });
+
+      if (statusSummary) levelRows.push({ label: "기록된 상태값", value: statusSummary });
+      const sigmaValues = sigma?.filter((v): v is number => v !== null) ?? [];
+      if (sigmaValues.length) {
+        const lo = Math.min(...sigmaValues);
+        const hi = Math.max(...sigmaValues);
+        levelRows.push({
+          label: "σ 범위",
+          value: hi < 1 ? `${fmt(lo * 100, 1)}~${fmt(hi * 100, 1)} cm` : `${fmt(lo)}~${fmt(hi)} m`,
+        });
+      }
+
+      out.push({ title: `GPS 품질 — 판정 근거 ${qualitySource}`, rows: levelRows });
     }
 
     // 주행 기록에 차량이 스스로 계산해 남긴 횡오차(cte_m)가 있으면 대조한다.
     // 여기 화면이 계산한 값과 맞아떨어지면 "이 그림을 믿어도 된다"는 근거가 된다.
-    const cte = target.track.parsed.extras.cte;
-    if (cte) {
+    const measuredErr = target.err;
+    const cte = measuredErr ? target.track.parsed.extras.cte : null;
+    if (cte && measuredErr) {
       let sum = 0;
       let max = 0;
       let n = 0;
-      for (let i = 0; i < target.err.length; i++) {
+      for (let i = 0; i < measuredErr.length; i++) {
         const v = cte[i];
         if (v == null) continue;
-        const gap = Math.abs(Math.abs(v) - target.err[i]);
+        const gap = Math.abs(Math.abs(v) - measuredErr[i]);
         sum += gap;
         max = Math.max(max, gap);
         n++;
@@ -325,19 +381,17 @@ export default function App() {
 
   const readout = (() => {
     if (!target || hoverIdx == null) return "그래프에 마우스를 올리면 그 지점이 지도에 표시됩니다.";
-    const { extras, rtk } = target.track.parsed;
-    const parts = [`벗어남 ${fmt(target.err[hoverIdx])} m`, `${fmt(target.dist[hoverIdx], 0)} m 지점`];
+    const { extras, quality, sigma } = target.track.parsed;
+    const parts: string[] = [];
+    if (target.err) parts.push(`벗어남 ${fmt(target.err[hoverIdx])} m`);
+    parts.push(`${fmt(target.dist[hoverIdx], 0)} m 지점`);
     const t = extras.t?.[hoverIdx];
     const speed = extras.speed?.[hoverIdx];
     if (t != null) parts.push(`t=${fmt(t, 1)} s`);
     if (speed != null) parts.push(`${fmt(speed, 1)} km/h`);
-    if (rtk) parts.push(rtk[hoverIdx] ? "RTK 고정" : "RTK 아님");
-    // fix_cov_xx 는 분산이라 제곱근을 취해야 표준편차가 된다
-    const cov = extras.cov?.[hoverIdx];
-    const sigma = extras.sigma?.[hoverIdx] ?? (cov != null && cov >= 0 ? Math.sqrt(cov) : null);
-    if (sigma != null) {
-      parts.push(sigma < 1 ? `σ ${fmt(sigma * 100, 1)} cm` : `σ ${fmt(sigma)} m`);
-    }
+    if (quality) parts.push(QUALITY_LABEL[quality[hoverIdx]].replace(/ \(.*\)$/, ""));
+    const s = sigma?.[hoverIdx];
+    if (s != null) parts.push(s < 1 ? `σ ${fmt(s * 100, 1)} cm` : `σ ${fmt(s)} m`);
     return parts.join(" · ");
   })();
 
@@ -475,13 +529,15 @@ export default function App() {
                   오차 색
                 </button>
                 <select
-                  value={errMax}
-                  onChange={(e) => setErrMax(Number(e.target.value))}
+                  value={String(errMaxChoice)}
+                  onChange={(e) =>
+                    setErrMaxChoice(e.target.value === "auto" ? "auto" : Number(e.target.value))
+                  }
                   title="오차 색과 그래프의 최대 눈금"
                 >
                   {ERR_MAX_CHOICES.map((v) => (
-                    <option key={v} value={v}>
-                      최대 {v} m
+                    <option key={String(v)} value={String(v)}>
+                      {v === "auto" ? `자동 (${fmt(errMax, 1)} m)` : `최대 ${v} m`}
                     </option>
                   ))}
                 </select>
@@ -496,29 +552,36 @@ export default function App() {
             </>
           )}
 
-          {target && (
+          {target && series && (
             <>
+              <p className="axis">
+                {series.kind === "err" ? "세로축: 벗어난 거리" : "세로축: GPS 표준편차 σ"} ·{" "}
+                {target.track.name}
+              </p>
               <ErrorProfile
-                err={target.err}
+                values={series.values}
                 dist={target.dist}
-                errMax={errMax}
-                rtk={target.track.parsed.rtk}
+                valueMax={series.max}
+                topLabel={series.topLabel}
+                quality={target.track.parsed.quality}
                 hoverIdx={hoverIdx}
                 onHover={setHoverIdx}
               />
-              {target.track.parsed.rtk && (
+              {target.track.parsed.quality && (
                 <div className="legend rtk">
-                  <i className="sw on" />
-                  <span>RTK 고정 (밝게)</span>
-                  <i className="sw off" />
-                  <span>RTK 아님 (어둡게)</span>
+                  <i className="sw high" />
+                  <span>RTK 고정급</span>
+                  <i className="sw mid" />
+                  <span>중간</span>
+                  <i className="sw low" />
+                  <span>낮음</span>
                 </div>
-              )}
-              {target.track.parsed.rtkNote && (
-                <p className="note warn">{target.track.parsed.rtkNote}</p>
               )}
               <p className="readout">{readout}</p>
             </>
+          )}
+          {target?.track.parsed.qualityNote && (
+            <p className="note warn">{target.track.parsed.qualityNote}</p>
           )}
 
           <StatsPanel sections={sections} />

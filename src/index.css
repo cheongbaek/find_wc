@@ -366,16 +366,30 @@ button.danger:hover {
   border-radius: 3px;
 }
 
-.legend .sw.on {
-  background: hsl(150 55% 52%);
+.legend .sw.high {
+  background: hsl(150 58% 55%);
 }
 
-.legend .sw.off {
-  background: hsl(150 16% 34%);
+.legend .sw.mid {
+  background: hsl(150 32% 42%);
+}
+
+.legend .sw.low {
+  background: hsl(150 14% 30%);
 }
 
 .legend .sw + span {
   margin-right: 8px;
+}
+
+/* 그래프 세로축이 무엇인지 — 오차일 수도, σ 일 수도 있다 */
+.axis {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: #9fb0c8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .readout {
