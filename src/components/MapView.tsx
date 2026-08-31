@@ -7,6 +7,14 @@ export type ColorMode = "solid" | "err";
 
 /** 그리기 모드에서 지도가 보여 줄 것과, 지도가 돌려줄 사건 */
 export interface DrawState {
+  /**
+   * ★지금 클릭을 받는가★ — '그려 둔 것을 보여 주는 것'과 갈라 놓는다.
+   *
+   * 매핑을 종료해도 그린 궤적은 지도에 남아야 하므로 이 객체 자체는 계속 넘어온다.
+   * 그래서 객체의 유무로 입력 허용을 판단하면 ★종료한 뒤에도 클릭이 먹는다★ —
+   * 실제로 그렇게 냈다가 잡았다. 입력 허용은 반드시 이 깃발로만 본다.
+   */
+  active: boolean;
   /** 지금까지 확정된 점(보간 포함) */
   pts: LatLng[];
   /** 사용자가 실제로 클릭한 자리 — 굵은 표식으로 구별한다 */
@@ -148,7 +156,7 @@ export default function MapView({
   handlers.current.onDrawClick = onDrawClick;
   handlers.current.onDrawMove = onDrawMove;
   handlers.current.onDrawFinish = onDrawFinish;
-  handlers.current.active = draw !== null;
+  handlers.current.active = draw?.active === true;
 
   // ── 지도 생성 (한 번만) ────────────────────────────────────────────────
   useEffect(() => {
@@ -359,5 +367,5 @@ export default function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitToken]);
 
-  return <div className={`map${draw ? " drawing" : ""}`} ref={boxRef} />;
+  return <div className={`map${draw?.active ? " drawing" : ""}`} ref={boxRef} />;
 }

@@ -568,6 +568,9 @@ export default function App() {
           draw={
             tab === "draw" && (drawActive || drawPts.length)
               ? {
+                  // ★보여 주기와 입력 받기를 갈라 둔다★ 종료 뒤에도 그린 궤적은
+                  //   지도에 남지만 클릭은 먹지 않아야 한다 (DrawState.active 주석)
+                  active: drawActive,
                   pts: drawPts,
                   vertices: drawVertices,
                   cursor: drawActive ? rawCursor : null,
