@@ -4,6 +4,7 @@ import MapView, { type ColorMode, type MapTrack, type MapType } from "./componen
 import StatsPanel, { type StatSection } from "./components/StatsPanel";
 import TrackList, { type TrackRow } from "./components/TrackList";
 import { useKakaoLoader } from "./hooks/useKakaoLoader";
+import { takeInboundCsv } from "./lib/inbound";
 import {
   KIND_LABEL,
   QUALITY_LABEL,
@@ -109,6 +110,25 @@ export default function App() {
     setNotes(messages);
     setBusy(false);
   }, []);
+
+  // ── 안드로이드 매핑 앱이 링크로 넘긴 CSV 자동 적재 ──────────────────────
+  // 앱의 목록에서 CSV 를 고르면 이 주소가 #csvgz=… 를 달고 열린다(lib/inbound.ts).
+  // 사용자가 '파일 선택'을 다시 누르지 않아도 그 파일이 곧바로 지도에 올라간다.
+  // 프래그먼트가 없으면(=앱의 '매핑 확인' 버튼으로 그냥 들어온 경우) 아무 일도
+  // 하지 않는다 — 빈 화면에서 사용자가 직접 올리는 종전 흐름 그대로다.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const inbound = await takeInboundCsv();
+        if (!inbound) return;
+        // File 로 감싸 기존 경로(addFiles)를 그대로 태운다 — 유형 판별·색 배정·
+        // 통계가 손으로 올린 파일과 완전히 같은 길을 지나게 하는 것이 목적이다.
+        await addFiles([new File([inbound.text], inbound.name, { type: "text/csv" })]);
+      } catch (e) {
+        setNotes([`링크로 받은 CSV 를 읽지 못했습니다: ${e instanceof Error ? e.message : String(e)}`]);
+      }
+    })();
+  }, [addFiles]);
 
   // 창 전체가 드롭 영역이다 — 파일을 어디에 떨어뜨려도 받는다
   useEffect(() => {
