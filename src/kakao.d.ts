@@ -74,11 +74,21 @@ declare global {
       setPosition(latlng: LatLng): void;
     }
 
+    /** click·mousemove·rightclick 이 넘겨주는 사건 객체 */
+    interface MouseEvent {
+      latLng: LatLng;
+    }
+
     namespace event {
       function addListener(
         target: object,
         type: string,
-        handler: (...args: unknown[]) => void
+        handler: (...args: never[]) => void
+      ): void;
+      function removeListener(
+        target: object,
+        type: string,
+        handler: (...args: never[]) => void
       ): void;
     }
   }

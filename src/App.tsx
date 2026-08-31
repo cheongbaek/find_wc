@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ControlPanel from "./components/ControlPanel";
+import DrawPanel from "./components/DrawPanel";
 import ErrorProfile from "./components/ErrorProfile";
 import MapView, { type ColorMode, type MapTrack, type MapType } from "./components/MapView";
 import StatsPanel, { type StatSection } from "./components/StatsPanel";
 import TrackList, { type TrackRow } from "./components/TrackList";
 import { useKakaoLoader } from "./hooks/useKakaoLoader";
 import { takeInboundCsv } from "./lib/inbound";
+import {
+  DEFAULT_SPACING_M,
+  download,
+  extend,
+  routeFileName,
+  snapToGrid,
+  toMappingCsv,
+  totalLength,
+} from "./lib/route";
 import {
   KIND_LABEL,
   QUALITY_LABEL,
@@ -47,9 +58,13 @@ function statRows(q: Quantiles, unit = "m") {
   ];
 }
 
+type Tab = "compare" | "draw";
+
 export default function App() {
   const kakao = useKakaoLoader();
 
+  const [tab, setTab] = useState<Tab>("compare");
+  const [collapsed, setCollapsed] = useState(false);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [mapType, setMapType] = useState<MapType>("sat");
   const [colorMode, setColorMode] = useState<ColorMode>("solid");
@@ -61,7 +76,18 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [ctrlHover, setCtrlHover] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── 궤적 생성 상태 ─────────────────────────────────────────────────────
+  //  pts 가 산출물(보간 포함)이고 vertices 는 사용자가 실제로 누른 자리다. segLens 는
+  //  ★클릭 한 번이 몇 점을 붙였는지★ — Backspace 가 그만큼만 되돌리기 위해 든다.
+  const [drawActive, setDrawActive] = useState(false);
+  const [drawPts, setDrawPts] = useState<LatLng[]>([]);
+  const [drawVertices, setDrawVertices] = useState<LatLng[]>([]);
+  const [segLens, setSegLens] = useState<number[]>([]);
+  const [spacing, setSpacing] = useState(DEFAULT_SPACING_M);
+  const [rawCursor, setRawCursor] = useState<LatLng | null>(null);
 
   // ── 파일 받기 ──────────────────────────────────────────────────────────
   const addFiles = useCallback(async (files: FileList | File[]) => {
@@ -173,6 +199,91 @@ export default function App() {
     setNotes([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  // ── 궤적 생성 ──────────────────────────────────────────────────────────
+
+  /** 지금 클릭하면 찍힐 자리. 첫 점은 격자가 없으므로 커서 그대로다. */
+  const snap = useMemo(() => {
+    if (!drawActive || !rawCursor) return null;
+    const last = drawPts[drawPts.length - 1];
+    if (!last) return { at: rawCursor, steps: 0, distM: 0, pullM: 0 };
+    return snapToGrid(last, rawCursor, spacing);
+  }, [drawActive, rawCursor, drawPts, spacing]);
+
+  //  ★상태 갱신 함수 안에서 다른 상태를 세우지 않는다★ React 가 updater 를
+  //  두 번 부르면(StrictMode) 점이 두 번 붙는다. 셋을 나란히 세운다.
+  const handleDrawClick = useCallback(
+    (at: LatLng) => {
+      const last = drawPts[drawPts.length - 1];
+      if (!last) {
+        // 첫 점 — 여기가 격자의 원점이 된다. 당길 직전 점이 없으니 클릭 그대로 찍는다.
+        setDrawPts([at]);
+        setDrawVertices([at]);
+        setSegLens([1]);
+        return;
+      }
+      const seg = extend(last, at, spacing);
+      setDrawPts((p) => [...p, ...seg.pts]);
+      setDrawVertices((v) => [...v, seg.snap.at]);
+      setSegLens((l) => [...l, seg.pts.length]);
+    },
+    [drawPts, spacing]
+  );
+
+  /** ★직전 '클릭'을 되돌린다★ 보간점 하나만 지우는 것은 뜻이 없다 — 격자가 어긋난다 */
+  const undoVertex = useCallback(() => {
+    if (!segLens.length) return;
+    const drop = segLens[segLens.length - 1];
+    setDrawPts((p) => p.slice(0, Math.max(0, p.length - drop)));
+    setDrawVertices((v) => v.slice(0, -1));
+    setSegLens((l) => l.slice(0, -1));
+  }, [segLens]);
+
+  const finishDraw = useCallback(() => {
+    setDrawActive(false);
+    setRawCursor(null);
+  }, []);
+
+  const resetDraw = useCallback(() => {
+    setDrawPts([]);
+    setDrawVertices([]);
+    setSegLens([]);
+    setRawCursor(null);
+  }, []);
+
+  /** 시작/종료 한 버튼. ★한 번에 하나만★ 이라 새로 시작하면 앞의 것은 사라진다 */
+  const toggleDraw = useCallback(() => {
+    if (drawActive) {
+      finishDraw();
+      return;
+    }
+    if (drawPts.length >= 2 && !window.confirm("그려 둔 궤적을 지우고 새로 시작할까요?")) return;
+    resetDraw();
+    setDrawActive(true);
+  }, [drawActive, drawPts.length, finishDraw, resetDraw]);
+
+  // ESC = 지정 완료 / Backspace = 직전 구간 지우기 (카카오 '거리 재기'와 같은 손버릇)
+  useEffect(() => {
+    if (!drawActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        finishDraw();
+      } else if (e.key === "Backspace") {
+        e.preventDefault(); // 막지 않으면 브라우저가 뒤로 가기를 한다
+        undoVertex();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawActive, finishDraw, undoVertex]);
+
+  const saveRoute = useCallback(() => {
+    if (drawPts.length < 2) return;
+    download(routeFileName(), toMappingCsv(drawPts));
+  }, [drawPts]);
 
   // ── 계산 ───────────────────────────────────────────────────────────────
   const analysis = useMemo(() => {
@@ -396,21 +507,46 @@ export default function App() {
     return out;
   }, [analysis, target]);
 
+  /**
+   * 제어 그래프에서 가리키는 표본을 지도 위 점으로 옮긴다.
+   * 제어 시계열은 ★병합 전 전 행★ 이라 pts 와 번호가 다르다 — 시각(t_rel)으로 맞춘다.
+   */
+  const ctrlHoverIdx = useMemo(() => {
+    const control = target?.track.parsed.control;
+    const times = target?.track.parsed.extras.t;
+    if (ctrlHover == null || !control || !times) return null;
+    const want = control.t[ctrlHover];
+    if (want == null) return null;
+    let best: number | null = null;
+    let gap = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const v = times[i];
+      if (v == null) continue;
+      const d = Math.abs(v - want);
+      if (d < gap) {
+        gap = d;
+        best = i;
+      }
+    }
+    return gap <= 1 ? best : null; // 1초 넘게 떨어지면 같은 지점이라 할 수 없다
+  }, [ctrlHover, target]);
+
+  const mapIdx = hoverIdx ?? ctrlHoverIdx;
   const cursor: LatLng | null =
-    hoverIdx != null && target ? target.track.parsed.pts[hoverIdx] ?? null : null;
+    mapIdx != null && target ? target.track.parsed.pts[mapIdx] ?? null : null;
 
   const readout = (() => {
-    if (!target || hoverIdx == null) return "그래프에 마우스를 올리면 그 지점이 지도에 표시됩니다.";
+    if (!target || mapIdx == null) return "그래프에 마우스를 올리면 그 지점이 지도에 표시됩니다.";
     const { extras, quality, sigma } = target.track.parsed;
     const parts: string[] = [];
-    if (target.err) parts.push(`벗어남 ${fmt(target.err[hoverIdx])} m`);
-    parts.push(`${fmt(target.dist[hoverIdx], 0)} m 지점`);
-    const t = extras.t?.[hoverIdx];
-    const speed = extras.speed?.[hoverIdx];
+    if (target.err) parts.push(`벗어남 ${fmt(target.err[mapIdx])} m`);
+    parts.push(`${fmt(target.dist[mapIdx], 0)} m 지점`);
+    const t = extras.t?.[mapIdx];
+    const speed = extras.speed?.[mapIdx];
     if (t != null) parts.push(`t=${fmt(t, 1)} s`);
     if (speed != null) parts.push(`${fmt(speed, 1)} km/h`);
-    if (quality) parts.push(QUALITY_LABEL[quality[hoverIdx]].replace(/ \(.*\)$/, ""));
-    const s = sigma?.[hoverIdx];
+    if (quality) parts.push(QUALITY_LABEL[quality[mapIdx]].replace(/ \(.*\)$/, ""));
+    const s = sigma?.[mapIdx];
     if (s != null) parts.push(s < 1 ? `σ ${fmt(s * 100, 1)} cm` : `σ ${fmt(s)} m`);
     return parts.join(" · ");
   })();
@@ -429,6 +565,19 @@ export default function App() {
           cursor={cursor}
           fitToken={fitToken}
           padLeft={padLeft}
+          draw={
+            tab === "draw" && (drawActive || drawPts.length)
+              ? {
+                  pts: drawPts,
+                  vertices: drawVertices,
+                  cursor: drawActive ? rawCursor : null,
+                  preview: drawActive ? snap?.at ?? null : null,
+                }
+              : null
+          }
+          onDrawClick={handleDrawClick}
+          onDrawMove={setRawCursor}
+          onDrawFinish={finishDraw}
         />
       ) : (
         <div className="map placeholder">
@@ -451,12 +600,64 @@ export default function App() {
         </div>
       )}
 
-      <aside className="panel">
+      <aside className={`panel${collapsed ? " collapsed" : ""}`}>
         <header>
-          <h1>궤적 비교</h1>
-          <span className="sub">매핑 vs 주행</span>
+          <div className="tabs" role="tablist">
+            {(
+              [
+                ["compare", "궤적 비교"],
+                ["draw", "궤적 생성"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={tab === value}
+                className={tab === value ? "on" : undefined}
+                onClick={() => {
+                  setTab(value);
+                  setCollapsed(false); // 탭을 눌렀으면 보고 싶다는 뜻이다
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="fold"
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? "펼치기" : "접기"}
+            aria-label={collapsed ? "패널 펼치기" : "패널 접기"}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? "\u2228" : "\u2212"}
+          </button>
         </header>
 
+        {!collapsed && tab === "draw" && (
+          <div className="scroll">
+            <DrawPanel
+              info={{
+                active: drawActive,
+                pts: drawPts,
+                vertices: drawVertices,
+                spacing,
+                lengthM: drawPts.length >= 2 ? totalLength(drawPts) : 0,
+                pullM: snap && drawPts.length ? snap.pullM : null,
+                ready: !drawActive && drawPts.length >= 2,
+              }}
+              onToggle={toggleDraw}
+              onSpacing={setSpacing}
+              onUndo={undoVertex}
+              onReset={resetDraw}
+              onDownload={saveRoute}
+            />
+          </div>
+        )}
+
+        {!collapsed && tab === "compare" && (
         <div className="scroll">
           <div
             className="drop"
@@ -516,7 +717,6 @@ export default function App() {
             {(
               [
                 ["sat", "위성"],
-                ["hybrid", "위성+도로"],
                 ["road", "일반"],
               ] as const
             ).map(([value, label]) => (
@@ -605,7 +805,16 @@ export default function App() {
           )}
 
           <StatsPanel sections={sections} />
+
+          {target?.track.parsed.control && (
+            <ControlPanel
+              control={target.track.parsed.control}
+              hoverIdx={ctrlHover}
+              onHover={setCtrlHover}
+            />
+          )}
         </div>
+        )}
       </aside>
 
       {dragging && <div className="dropveil">여기에 놓으세요</div>}

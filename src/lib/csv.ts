@@ -31,6 +31,73 @@ export type ExtraName = keyof typeof EXTRA_COLUMNS;
 export type Extras = Partial<Record<ExtraName, (number | null)[]>>;
 
 /**
+ * ★제어 진단 열★ — record.py 가 20 Hz 로 찍는 신호들. 위 EXTRA_COLUMNS 와 따로 두는
+ * 이유는 ★해상도가 다르기 때문★ 이다(아래 ControlSeries 주석).
+ *
+ * 이름의 뜻은 white1/record.py 의 RECORD_TOPICS 가 소유한다. 헷갈리기 쉬운 것만:
+ *  · cmd_steer_deg / steer_measured_deg 는 ★pot 지령각★ 이지 도로휠각이 아니다
+ *    (도로휠각 ≈ pot ÷ 1.26). driving.py 의 '조향 전달계 실측 보정' 절 참고.
+ *  · heading_err_deg 는 ★헤딩 오차가 아니다★ — 순수추종 목표점의 차체기준 방위 α다
+ *    (driving.py:2836 "예전엔 인덱스 WP 방위오차, 지금은 alpha").
+ *  · speed_kmh(/speed) 는 record.py 가 "절대값은 못 믿는다"고 못 박은 IMU 적분값이라
+ *    여기 넣지 않는다. 속도는 gps_kmh 와 encoder_sum 으로 본다.
+ */
+const CONTROL_COLUMNS = {
+  // ── /cmd_vel_raw : 아두이노로 나가는 최종 명령 ──
+  cmdPulse: ["cmd_pulse"],
+  cmdSteer: ["cmd_steer_deg"],
+  // ── 조향 실측 ──
+  measSteer: ["steer_measured_deg", "steer_measured"],
+  // ── 순수추종 입력 ──
+  alpha: ["heading_err_deg"],
+  targetDist: ["target_dist_m"],
+  // ── CTE 적분(PID 의 I 항) ──
+  cte: ["cte_m"],
+  cteITerm: ["cte_i_term_deg"],
+  cteIntegral: ["cte_integral"],
+  // ── 속도 ──
+  gpsKmh: ["gps_kmh"],
+  encoder: ["encoder_sum"],
+  // ── 저속 펄스 보정 3종 : out ≠ ref 인 구간이 보정이 걸린 구간이다 ──
+  refPulse: ["ref_pulse"],
+  outPulse: ["out_pulse"],
+  measPulse: ["meas_pulse"],
+  // ── 문맥 : 속도 그래프의 계단이 왜 생겼는지 ──
+  goalPhase: ["goal_phase"],
+  cbState: ["cb_state"],
+  brakeLevel: ["brake_level"],
+  brakePot: ["brake_pot"],
+  // ── 이 좌표를 얼마나 믿을 수 있나 ──
+  isRaw: ["gps_is_raw"],
+  rejectN: ["gps_reject_n"],
+  sigma: ["gps_sigma_m"],
+} as const;
+
+export type ControlName = keyof typeof CONTROL_COLUMNS;
+
+/**
+ * ★전 행 시계열★ — hold 중복을 합치기 ★전★ 의 원본 해상도.
+ *
+ * 위의 pts/extras 는 연속 중복 좌표를 하나로 합친다(오차 통계가 왜곡되지 않게).
+ * 그런데 GPS 는 5 Hz 이고 제어는 20 Hz 라, 같은 규칙을 제어 신호에 적용하면
+ * ★네 표본 중 셋이 사라진다★ — 조향이 20 Hz 로 움직이는 것을 5 Hz 로 보게 된다.
+ * 그래서 제어 신호만은 병합하지 않은 전 행을 따로 들고 있는다.
+ *
+ * ⚠️ record.py 는 값이 안 오면 ★마지막 값을 유지(hold)★ 한다. 즉 여기 있는 값은
+ *   "그 시각의 측정값"이 아니라 "그 시각까지 마지막으로 받은 값"이다. 5 Hz 토픽
+ *   (gps_kmh 등)은 같은 값이 네 번씩 이어진다 — 계단으로 보이는 것이 정상이다.
+ */
+export interface ControlSeries {
+  /** t_rel [s]. 기록 시작부터의 경과 */
+  t: number[];
+  cols: Partial<Record<ControlName, (number | null)[]>>;
+  /** 실제로 찾은 열 이름 — 무엇을 읽었는지 감추지 않는다 */
+  found: string[];
+  /** 표본 간 중앙값 간격 [s]. 20 Hz 면 0.05 가 나와야 한다 */
+  periodS: number | null;
+}
+
+/**
  * ★GPS 정밀도 등급★ — 밝기로 표현한다. 높을수록 밝다.
  *
  * 이진(RTK냐 아니냐)으로는 실측 파일들의 차이가 드러나지 않았다. 어떤 주행은
@@ -86,6 +153,8 @@ export interface ParsedTrack {
   skippedRows: number;
   /** 같은 자리에 머무른(hold) 중복 점을 합친 수 */
   mergedRows: number;
+  /** 제어 신호 시계열 — ★병합하지 않은 전 행★. 제어 열이 하나도 없으면 null */
+  control: ControlSeries | null;
 }
 
 /**
@@ -171,6 +240,22 @@ function summarize(collected: Map<string, string[]>): string | null {
     parts.push(`${name}=${distinct.slice(0, 4).join("/")}${distinct.length > 4 ? "…" : ""}`);
   }
   return parts.length ? parts.join(" · ") : null;
+}
+
+/**
+ * 표본 간 간격의 중앙값 [s]. 20 Hz 기록이면 0.05 가 나온다.
+ * 평균이 아니라 중앙값인 이유는 ★기록이 끊겼던 구간 하나가 평균을 통째로 끌기★ 때문이다.
+ */
+function medianStep(t: number[]): number | null {
+  if (t.length < 2) return null;
+  const gaps: number[] = [];
+  for (let i = 1; i < t.length; i++) {
+    const d = t[i] - t[i - 1];
+    if (d > 0) gaps.push(d);
+  }
+  if (!gaps.length) return null;
+  gaps.sort((a, b) => a - b);
+  return gaps[gaps.length >> 1];
 }
 
 function levelOf(sigma: number): Quality {
@@ -288,6 +373,13 @@ export function parseTrackCsv(text: string): ParsedTrack {
     })
     .filter((entry): entry is readonly [ExtraName, number] => entry !== null);
 
+  const controlIdx = Object.entries(CONTROL_COLUMNS)
+    .map(([name, keys]) => {
+      const hit = keys.map((k) => index.get(k)).find((i) => i !== undefined);
+      return hit === undefined ? null : ([name as ControlName, hit] as const);
+    })
+    .filter((entry): entry is readonly [ControlName, number] => entry !== null);
+
   const statusIdx = RAW_SOURCES.map((name) => ({ name, idx: index.get(name) })).filter(
     (entry): entry is { name: (typeof RAW_SOURCES)[number]; idx: number } => entry.idx !== undefined
   );
@@ -300,9 +392,24 @@ export function parseTrackCsv(text: string): ParsedTrack {
   let skipped = 0;
   let merged = 0;
 
+  // ★제어 시계열은 여기서 갈라진다★ 아래 좌표 루프는 못 쓰는 행을 버리고 hold 중복을
+  //   합치지만, 제어 신호는 ★그 행들에도 값이 들어 있다★ — GPS 가 안 잡힌 동안에도
+  //   조향은 나가고 있었다. 그래서 전 행을 그대로 담는다.
+  const ctrlT: number[] = [];
+  const ctrlCols: Partial<Record<ControlName, (number | null)[]>> = {};
+  controlIdx.forEach(([name]) => (ctrlCols[name] = []));
+  const tIdx = EXTRA_COLUMNS.t.map((k) => index.get(k)).find((i) => i !== undefined);
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     if (row.length === 1 && !row[0].trim()) continue; // 끝의 빈 줄
+
+    if (controlIdx.length) {
+      // 시간 열이 없으면 행 번호를 20 Hz 로 환산해 쓴다 — 가로축이 없으면 그릴 수 없다
+      ctrlT.push(tIdx === undefined ? ctrlT.length * 0.05 : toNumber(row[tIdx]) ?? ctrlT.length * 0.05);
+      for (const [name, idx] of controlIdx) ctrlCols[name]!.push(toNumber(row[idx]));
+    }
+
     const lat = toNumber(row[latIdx]);
     const lon = toNumber(row[lonIdx]);
     if (!isUsable(lat, lon)) {
@@ -340,6 +447,14 @@ export function parseTrackCsv(text: string): ParsedTrack {
     totalRows: rows.length - 1,
     skippedRows: skipped,
     mergedRows: merged,
+    control: controlIdx.length
+      ? {
+          t: ctrlT,
+          cols: ctrlCols,
+          found: controlIdx.map(([, idx]) => header[idx]),
+          periodS: medianStep(ctrlT),
+        }
+      : null,
   };
 }
 

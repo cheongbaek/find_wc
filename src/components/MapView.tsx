@@ -2,8 +2,20 @@ import { useEffect, useRef } from "react";
 import type { Quality } from "../lib/csv";
 import { errColor, type LatLng } from "../lib/geo";
 
-export type MapType = "sat" | "hybrid" | "road";
+export type MapType = "sat" | "road";
 export type ColorMode = "solid" | "err";
+
+/** 그리기 모드에서 지도가 보여 줄 것과, 지도가 돌려줄 사건 */
+export interface DrawState {
+  /** 지금까지 확정된 점(보간 포함) */
+  pts: LatLng[];
+  /** 사용자가 실제로 클릭한 자리 — 굵은 표식으로 구별한다 */
+  vertices: LatLng[];
+  /** 마우스가 지금 있는 자리 (격자에 물리기 전) */
+  cursor: LatLng | null;
+  /** 지금 클릭하면 찍힐 자리 (격자에 물린 뒤) */
+  preview: LatLng | null;
+}
 
 export interface MapTrack {
   id: string;
@@ -26,6 +38,14 @@ interface Props {
   fitToken: number;
   /** 패널에 가리지 않도록 왼쪽에 비워 둘 폭 [px] */
   padLeft: number;
+  /** 그리기 중이면 그 상태. null 이면 종전대로 보기 전용 */
+  draw: DrawState | null;
+  /** 지도를 클릭했다 (끌기는 걸러진 뒤) */
+  onDrawClick: (at: LatLng) => void;
+  /** 마우스가 움직였다 — 예정 지점을 다시 계산하라는 뜻 */
+  onDrawMove: (at: LatLng | null) => void;
+  /** 오른쪽 클릭 = 지정 완료 */
+  onDrawFinish: () => void;
 }
 
 /** 오차 색을 몇 단계로 끊을지 — 너무 잘게 나누면 선 조각이 수천 개가 된다 */
@@ -110,12 +130,25 @@ export default function MapView({
   cursor,
   fitToken,
   padLeft,
+  draw,
+  onDrawClick,
+  onDrawMove,
+  onDrawFinish,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<kakao.maps.Map | null>(null);
   const drawnRef = useRef<Removable[]>([]);
   const overlayTypeRef = useRef<kakao.maps.MapTypeId | null>(null);
   const cursorRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  const sketchRef = useRef<Removable[]>([]);
+
+  // ★콜백을 ref 로 붙든다★ 카카오 이벤트는 한 번만 걸고 싶은데, 콜백은 매 렌더
+  //   새로 만들어진다. 의존성에 넣으면 렌더마다 이벤트를 떼었다 다시 단다.
+  const handlers = useRef({ onDrawClick, onDrawMove, onDrawFinish, active: false });
+  handlers.current.onDrawClick = onDrawClick;
+  handlers.current.onDrawMove = onDrawMove;
+  handlers.current.onDrawFinish = onDrawFinish;
+  handlers.current.active = draw !== null;
 
   // ── 지도 생성 (한 번만) ────────────────────────────────────────────────
   useEffect(() => {
@@ -137,10 +170,6 @@ export default function MapView({
       overlayTypeRef.current = null;
     }
     map.setMapTypeId(mapType === "road" ? MapTypeId.ROADMAP : MapTypeId.SKYVIEW);
-    if (mapType === "hybrid") {
-      map.addOverlayMapTypeId(MapTypeId.HYBRID); // 위성 위에 도로·지명을 얹는다
-      overlayTypeRef.current = MapTypeId.HYBRID;
-    }
   }, [mapType]);
 
   // ── 궤적 그리기 ────────────────────────────────────────────────────────
@@ -201,6 +230,118 @@ export default function MapView({
     }
   }, [cursor]);
 
+  // ── 그리기 : 지도 사건 받기 (한 번만 건다) ────────────────────────────
+  //  ★클릭과 끌기를 갈라야 한다★ 카카오의 '거리 재기'처럼, 눌렀다 뗀 자리가 거의
+  //  같을 때만 점을 찍고 그 이상 움직였으면 지도를 옮긴 것으로 본다. 그래야 그리는
+  //  도중에도 지도를 자유롭게 끌 수 있다.
+  useEffect(() => {
+    const map = mapRef.current;
+    const box = boxRef.current;
+    if (!map || !box) return;
+    const { event } = window.kakao.maps;
+
+    let downX = 0;
+    let downY = 0;
+    let moved = false;
+    const DRAG_PX = 5; // 이보다 움직였으면 끌기다 (손떨림 여유)
+
+    const down = (e: MouseEvent) => {
+      downX = e.clientX;
+      downY = e.clientY;
+      moved = false;
+    };
+    const move = (e: MouseEvent) => {
+      if (e.buttons && Math.hypot(e.clientX - downX, e.clientY - downY) > DRAG_PX) moved = true;
+    };
+    // 그리는 동안에는 오른쪽 클릭이 '완료'이므로 브라우저 메뉴를 막는다
+    const menu = (e: MouseEvent) => {
+      if (handlers.current.active) e.preventDefault();
+    };
+    box.addEventListener("mousedown", down);
+    box.addEventListener("mousemove", move);
+    box.addEventListener("contextmenu", menu);
+
+    const onClick = (e: kakao.maps.MouseEvent) => {
+      if (!handlers.current.active || moved) return;
+      handlers.current.onDrawClick({ lat: e.latLng.getLat(), lng: e.latLng.getLng() });
+    };
+    const onMove = (e: kakao.maps.MouseEvent) => {
+      if (!handlers.current.active) return;
+      handlers.current.onDrawMove({ lat: e.latLng.getLat(), lng: e.latLng.getLng() });
+    };
+    const onRight = () => {
+      if (handlers.current.active) handlers.current.onDrawFinish();
+    };
+
+    event.addListener(map, "click", onClick);
+    event.addListener(map, "mousemove", onMove);
+    event.addListener(map, "rightclick", onRight);
+    return () => {
+      box.removeEventListener("mousedown", down);
+      box.removeEventListener("mousemove", move);
+      box.removeEventListener("contextmenu", menu);
+      event.removeListener(map, "click", onClick);
+      event.removeListener(map, "mousemove", onMove);
+      event.removeListener(map, "rightclick", onRight);
+    };
+  }, []);
+
+  // ── 그리기 : 그리는 중인 궤적 ──────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const { LatLng, Polyline, CustomOverlay } = window.kakao.maps;
+
+    sketchRef.current.forEach((obj) => obj.setMap(null));
+    sketchRef.current = [];
+    if (!draw) return;
+
+    const keep = (obj: Removable) => sketchRef.current.push(obj);
+    const dot = (p: LatLng, cls: string, z: number) =>
+      keep(
+        new CustomOverlay({
+          map,
+          position: new LatLng(p.lat, p.lng),
+          content: `<div class="${cls}"></div>`,
+          xAnchor: 0.5,
+          yAnchor: 0.5,
+          zIndex: z,
+        })
+      );
+
+    if (draw.pts.length >= 2) {
+      const path = draw.pts.map((p) => new LatLng(p.lat, p.lng));
+      keep(new Polyline({ map, path, strokeColor: "#000000", strokeWeight: 7, strokeOpacity: 0.45, zIndex: 800 }));
+      keep(new Polyline({ map, path, strokeColor: "#ffd60a", strokeWeight: 4, strokeOpacity: 0.95, zIndex: 801 }));
+    }
+
+    // 격자에 물린 점들 — 간격이 눈에 보여야 스냅이 도는지 확인할 수 있다.
+    // 수백 개를 넘으면 오버레이 값이 비싸지므로 그때는 선만 남긴다.
+    if (draw.pts.length <= 600) draw.pts.forEach((p) => dot(p, "grid-dot", 810));
+    draw.vertices.forEach((p) => dot(p, "vertex-dot", 820));
+
+    // ★커서와 예정 지점을 나란히 보여 준다★ 둘 사이가 벌어져 보이는 만큼이
+    //   격자에 당겨진 거리다. 점선으로 이어야 '이게 저기로 간다'가 읽힌다.
+    if (draw.preview) {
+      const last = draw.pts[draw.pts.length - 1];
+      if (last) {
+        keep(
+          new Polyline({
+            map,
+            path: [new LatLng(last.lat, last.lng), new LatLng(draw.preview.lat, draw.preview.lng)],
+            strokeColor: "#ffd60a",
+            strokeWeight: 3,
+            strokeOpacity: 0.85,
+            strokeStyle: "shortdash",
+            zIndex: 802,
+          })
+        );
+      }
+      dot(draw.preview, "preview-dot", 830);
+    }
+    if (draw.cursor) dot(draw.cursor, "raw-dot", 829);
+  }, [draw]);
+
   // ── 전체 보기 ──────────────────────────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current;
@@ -218,5 +359,5 @@ export default function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitToken]);
 
-  return <div className="map" ref={boxRef} />;
+  return <div className={`map${draw ? " drawing" : ""}`} ref={boxRef} />;
 }
