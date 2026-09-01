@@ -137,6 +137,16 @@ export interface ParsedTrack {
   latColumn: string;
   lonColumn: string;
   pts: LatLng[];
+  /**
+   * ★CSV 에 적힌 위경도 문자열 그대로★ — pts 와 같은 순서·같은 길이.
+   *
+   * pts 는 숫자로 바꾼 값이라 화면에 찍으면 자릿수가 원본과 달라 보일 수 있다
+   * (7자리로 적힌 파일에 8자리를 만들어 내거나, 그 반대). 선택한 지점의 좌표는
+   * ★파일에 적힌 것과 한 글자도 다르지 않아야★ 다른 도구와 대조할 수 있으므로
+   * 원문을 따로 들고 있는다.
+   */
+  rawLat: string[];
+  rawLon: string[];
   extras: Extras;
   /** 점마다의 GPS 정밀도 등급. 판정할 근거가 없으면 null */
   quality: Quality[] | null;
@@ -386,6 +396,8 @@ export function parseTrackCsv(text: string): ParsedTrack {
 
   // ── 본문 ──────────────────────────────────────────────────────────────
   const pts: LatLng[] = [];
+  const rawLat: string[] = [];
+  const rawLon: string[] = [];
   const extras: Extras = {};
   extraIdx.forEach(([name]) => (extras[name] = []));
   const statusRaw = new Map<string, string[]>(statusIdx.map((entry) => [entry.name, []]));
@@ -425,6 +437,8 @@ export function parseTrackCsv(text: string): ParsedTrack {
       continue;
     }
     pts.push({ lat, lng: lon as number });
+    rawLat.push((row[latIdx] ?? "").trim());
+    rawLon.push((row[lonIdx] ?? "").trim());
     for (const [name, idx] of extraIdx) extras[name]!.push(toNumber(row[idx]));
     for (const entry of statusIdx) statusRaw.get(entry.name)!.push(row[entry.idx] ?? "");
   }
@@ -438,6 +452,8 @@ export function parseTrackCsv(text: string): ParsedTrack {
     latColumn: header[latIdx],
     lonColumn: header[lonIdx],
     pts,
+    rawLat,
+    rawLon,
     extras,
     quality: verdict.quality,
     sigma: verdict.sigma,

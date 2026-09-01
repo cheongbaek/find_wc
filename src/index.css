@@ -708,3 +708,21 @@ select:disabled {
   color: #fff;
   text-decoration: underline;
 }
+
+/* 선택 지점 표 — 값이 남아 있는 상태라 '지금 무엇을 보고 있는지' 가 분명해야 한다 */
+.stats.pick {
+  margin-bottom: 10px;
+}
+
+.stats.pick tr.sec th,
+.stats.pick tr.sec td {
+  padding-top: 0;
+}
+
+.stats.pick tr.sec td {
+  text-align: right;
+}
+
+.stats.pick td {
+  font-variant-numeric: tabular-nums;
+}

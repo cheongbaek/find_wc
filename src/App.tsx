@@ -6,6 +6,7 @@ import MapView, { type ColorMode, type MapTrack, type MapType } from "./componen
 import StatsPanel, { type StatSection } from "./components/StatsPanel";
 import TrackList, { type TrackRow } from "./components/TrackList";
 import { useKakaoLoader } from "./hooks/useKakaoLoader";
+import { pulseKmh } from "./lib/control";
 import { takeInboundCsv } from "./lib/inbound";
 import {
   DEFAULT_SPACING_M,
@@ -60,6 +61,18 @@ function statRows(q: Quantiles, unit = "m") {
 
 type Tab = "compare" | "draw";
 
+/**
+ * 그래프에서 고른 지점. ★어느 그래프에서 골랐는지를 함께 든다★
+ *
+ * 오차 그래프는 지도 점(hold 병합 후) 번호이고 제어 그래프는 전 행 번호라
+ * 번호 공간이 다르다. 원본을 기억해 두고 반대쪽은 ★시각(t_rel)으로 환산★ 한다 —
+ * 그래야 어느 쪽을 긁어도 나머지가 같은 순간을 가리킨다.
+ */
+interface Sel {
+  src: "profile" | "control";
+  idx: number;
+}
+
 export default function App() {
   const kakao = useKakaoLoader();
 
@@ -71,12 +84,11 @@ export default function App() {
   const [errMaxChoice, setErrMaxChoice] = useState<number | "auto">(1);
   const [refId, setRefId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [sel, setSel] = useState<Sel | null>(null);
   const [fitToken, setFitToken] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [ctrlHover, setCtrlHover] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── 궤적 생성 상태 ─────────────────────────────────────────────────────
@@ -187,7 +199,7 @@ export default function App() {
     setTracks((prev) => prev.filter((t) => t.id !== id));
     setRefId((cur) => (cur === id ? null : cur));
     setSelectedId((cur) => (cur === id ? null : cur));
-    setHoverIdx(null);
+    setSel(null);
     setNotes([]);
   };
 
@@ -195,7 +207,7 @@ export default function App() {
     setTracks([]);
     setRefId(null);
     setSelectedId(null);
-    setHoverIdx(null);
+    setSel(null);
     setNotes([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -508,48 +520,94 @@ export default function App() {
   }, [analysis, target]);
 
   /**
-   * 제어 그래프에서 가리키는 표본을 지도 위 점으로 옮긴다.
-   * 제어 시계열은 ★병합 전 전 행★ 이라 pts 와 번호가 다르다 — 시각(t_rel)으로 맞춘다.
+   * 고른 지점을 두 번호 공간 양쪽으로 환산한다.
+   * 시각이 1초 넘게 벌어지면 같은 순간이라 할 수 없으므로 그쪽은 비운다.
    */
-  const ctrlHoverIdx = useMemo(() => {
-    const control = target?.track.parsed.control;
-    const times = target?.track.parsed.extras.t;
-    if (ctrlHover == null || !control || !times) return null;
-    const want = control.t[ctrlHover];
-    if (want == null) return null;
-    let best: number | null = null;
-    let gap = Infinity;
-    for (let i = 0; i < times.length; i++) {
-      const v = times[i];
-      if (v == null) continue;
-      const d = Math.abs(v - want);
-      if (d < gap) {
-        gap = d;
-        best = i;
-      }
-    }
-    return gap <= 1 ? best : null; // 1초 넘게 떨어지면 같은 지점이라 할 수 없다
-  }, [ctrlHover, target]);
+  const picked = useMemo(() => {
+    if (!sel || !target) return null;
+    const { parsed } = target.track;
+    const ptsT = parsed.extras.t ?? null;
+    const ctrlT = parsed.control?.t ?? null;
 
-  const mapIdx = hoverIdx ?? ctrlHoverIdx;
+    const nearest = (times: (number | null)[], want: number) => {
+      let best: number | null = null;
+      let gap = Infinity;
+      for (let i = 0; i < times.length; i++) {
+        const v = times[i];
+        if (v == null) continue;
+        const d = Math.abs(v - want);
+        if (d < gap) {
+          gap = d;
+          best = i;
+        }
+      }
+      return gap <= 1 ? best : null;
+    };
+
+    if (sel.src === "profile") {
+      const p = Math.min(sel.idx, parsed.pts.length - 1);
+      const want = ptsT?.[p];
+      return { pts: p, ctrl: want != null && ctrlT ? nearest(ctrlT, want) : null };
+    }
+    const c = Math.min(sel.idx, (ctrlT?.length ?? 1) - 1);
+    const want = ctrlT?.[c];
+    return { pts: want != null && ptsT ? nearest(ptsT, want) : null, ctrl: c };
+  }, [sel, target]);
+
+  const mapIdx = picked?.pts ?? null;
   const cursor: LatLng | null =
     mapIdx != null && target ? target.track.parsed.pts[mapIdx] ?? null : null;
 
-  const readout = (() => {
-    if (!target || mapIdx == null) return "그래프에 마우스를 올리면 그 지점이 지도에 표시됩니다.";
-    const { extras, quality, sigma } = target.track.parsed;
-    const parts: string[] = [];
-    if (target.err) parts.push(`벗어남 ${fmt(target.err[mapIdx])} m`);
-    parts.push(`${fmt(target.dist[mapIdx], 0)} m 지점`);
-    const t = extras.t?.[mapIdx];
-    const speed = extras.speed?.[mapIdx];
-    if (t != null) parts.push(`t=${fmt(t, 1)} s`);
-    if (speed != null) parts.push(`${fmt(speed, 1)} km/h`);
-    if (quality) parts.push(QUALITY_LABEL[quality[mapIdx]].replace(/ \(.*\)$/, ""));
-    const s = sigma?.[mapIdx];
-    if (s != null) parts.push(s < 1 ? `σ ${fmt(s * 100, 1)} cm` : `σ ${fmt(s)} m`);
-    return parts.join(" · ");
-  })();
+  /**
+   * 고른 지점의 값들. ★CSV 에 적힌 위경도를 원문 그대로 맨 위에 둔다★ —
+   * 다른 도구와 대조하려면 자릿수까지 같아야 하기 때문이다.
+   */
+  const pickRows = useMemo(() => {
+    if (!target || !picked) return null;
+    const { parsed } = target.track;
+    const rows: { label: string; value: string }[] = [];
+    const p = picked.pts;
+
+    if (p != null) {
+      rows.push({ label: "위도", value: parsed.rawLat[p] || fmt(parsed.pts[p].lat, 8) });
+      rows.push({ label: "경도", value: parsed.rawLon[p] || fmt(parsed.pts[p].lng, 8) });
+      const t = parsed.extras.t?.[p];
+      if (t != null) rows.push({ label: "t_rel", value: `${fmt(t, 2)} s` });
+      if (target.err) rows.push({ label: "벗어난 거리", value: `${fmt(target.err[p])} m` });
+      if (parsed.quality) {
+        rows.push({
+          label: "GPS 등급",
+          value: QUALITY_LABEL[parsed.quality[p]].replace(/ \(.*\)$/, ""),
+        });
+      }
+      const sg = parsed.sigma?.[p];
+      if (sg != null) {
+        rows.push({ label: "σ", value: sg < 1 ? `${fmt(sg * 100, 1)} cm` : `${fmt(sg)} m` });
+      }
+    }
+
+    const c = picked.ctrl;
+    const cols = parsed.control?.cols;
+    if (c != null && cols) {
+      const at = (name: keyof typeof cols) => cols[name]?.[c] ?? null;
+      const add = (label: string, v: number | null, unit: string, d = 2) => {
+        if (v != null && Number.isFinite(v)) rows.push({ label, value: `${fmt(v, d)}${unit}` });
+      };
+      add("경로오차 cte_m", at("cte"), " m", 3);
+      add("적분 ∫CTE", at("cteIntegral"), " m·s", 3);
+      add("적분 기여", at("cteITerm"), "°");
+      add("조향 지령", at("cmdSteer"), "°");
+      add("조향 실측", at("measSteer"), "°");
+      add("목표 방위 α", at("alpha"), "°");
+      add("선행거리", at("targetDist"), " m");
+      const meas = at("measPulse");
+      if (meas != null) add("속도(실측)", pulseKmh(meas), " km/h", 1);
+      const cmd = at("cmdPulse");
+      if (cmd != null) add("속도(지령)", pulseKmh(cmd), " km/h", 1);
+      add("GPS 속도", at("gpsKmh"), " km/h", 1);
+    }
+    return rows.length ? rows : null;
+  }, [target, picked]);
 
   const hasError = tracks.some((t) => analysis?.errors.has(t.id));
   const padLeft = typeof window !== "undefined" && window.innerWidth > 720 ? 380 : 48;
@@ -787,8 +845,8 @@ export default function App() {
                 valueMax={series.max}
                 topLabel={series.topLabel}
                 quality={target.track.parsed.quality}
-                hoverIdx={hoverIdx}
-                onHover={setHoverIdx}
+                hoverIdx={picked?.pts ?? null}
+                onHover={(i) => setSel(i == null ? null : { src: "profile", idx: i })}
               />
               {target.track.parsed.quality && (
                 <div className="legend rtk">
@@ -800,7 +858,30 @@ export default function App() {
                   <span>낮음</span>
                 </div>
               )}
-              <p className="readout">{readout}</p>
+              {pickRows ? (
+                <table className="stats pick">
+                  <tbody>
+                    <tr className="sec">
+                      <th>선택 지점</th>
+                      <td>
+                        <button type="button" className="mini" onClick={() => setSel(null)}>
+                          해제
+                        </button>
+                      </td>
+                    </tr>
+                    {pickRows.map((r) => (
+                      <tr key={r.label}>
+                        <th>{r.label}</th>
+                        <td>{r.value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="readout">
+                  그래프를 끌어 지점을 고르세요. 손을 떼도 그 값이 남습니다.
+                </p>
+              )}
             </>
           )}
           {target?.track.parsed.qualityNote && (
@@ -812,8 +893,8 @@ export default function App() {
           {target?.track.parsed.control && (
             <ControlPanel
               control={target.track.parsed.control}
-              hoverIdx={ctrlHover}
-              onHover={setCtrlHover}
+              hoverIdx={picked?.ctrl ?? null}
+              onHover={(i) => setSel(i == null ? null : { src: "control", idx: i })}
             />
           )}
         </div>

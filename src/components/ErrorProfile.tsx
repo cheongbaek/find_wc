@@ -118,8 +118,9 @@ export default function ErrorProfile({
         pick(e);
       }}
       onPointerMove={pick}
+      // ★onPointerLeave 로 선택을 지우지 않는다★ 손을 떼거나 그래프 밖으로
+      //   나가도 고른 지점이 남아야 아래 표의 값을 천천히 읽을 수 있다.
       onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
-      onPointerLeave={() => onHover(null)}
     >
       <line className="grid" x1="0" y1={yOf(valueMax)} x2={W} y2={yOf(valueMax)} />
       <line className="grid" x1="0" y1={yOf(valueMax / 2)} x2={W} y2={yOf(valueMax / 2)} />

@@ -180,8 +180,9 @@ export default function SignalChart({
           pick(e);
         }}
         onPointerMove={pick}
+        // ★onPointerLeave 로 선택을 지우지 않는다★ 손을 떼거나 그래프 밖으로
+        //   나가도 고른 지점이 남아야 아래 표의 값을 천천히 읽을 수 있다.
         onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
-        onPointerLeave={() => onHover(null)}
       >
         {zeroY !== null && <line className="zero" x1="0" y1={zeroY} x2={W} y2={zeroY} />}
         {shownGuides.map((g) => (
