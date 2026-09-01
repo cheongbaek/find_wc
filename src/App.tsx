@@ -818,6 +818,18 @@ export default function App() {
           )}
         </div>
         )}
+
+        {/* 접지 않았을 때만 — 도구에서 소개·방침으로 나가는 유일한 통로다.
+            정적 페이지(about.html/privacy.html)라 크롤러도 그대로 따라간다. */}
+        {!collapsed && (
+          <div className="panel-foot">
+            <a href="about.html">사용법</a>
+            <a href="../privacy.html">개인정보처리방침</a>
+            <a href="https://github.com/cheongbaek/find_wc" target="_blank" rel="noopener">
+              소스
+            </a>
+          </div>
+        )}
       </aside>
 
       {dragging && <div className="dropveil">여기에 놓으세요</div>}

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>사용법 — 궤적 비교 (매핑 vs 주행)</title>
+  <meta name="description" content="매핑·주행 궤적 CSV를 위성지도에 겹쳐 보는 방법, GPS 정밀도 등급과 제어 진단 그래프를 읽는 법, 궤적을 손으로 그려 CSV로 내려받는 방법." />
+  <!-- ★스타일을 인라인으로 둔다★ 이 페이지는 find_wc 리포에 있고 도메인 루트의
+       style.css 는 다른 리포(cheongbaek.github.io)에 있다. 링크로 걸면 그쪽이 바뀌거나
+       도구를 다른 자리에 올리는 순간 스타일 없는 맨 HTML 이 된다 — 자체 완결로 둔다. -->
+  <style>
+    /* 공통 문서 스타일 — 도구(find_wc)의 어두운 화면과 같은 계열로 맞춘다 */
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0 20px 64px;
+      font-family: "Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+      color: #e6ecf5;
+      background: #10131a;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; }
+    header { padding: 44px 0 28px; border-bottom: 1px solid rgba(255,255,255,.14); }
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.35; }
+    header p { margin: 0; color: #9fb0c8; }
+    h2 { margin: 40px 0 12px; font-size: 19px; }
+    h3 { margin: 26px 0 8px; font-size: 16px; }
+    p, li { color: #cfd8e6; }
+    a { color: #6ea8ff; }
+    a:hover { color: #9dc4ff; }
+    code {
+      padding: 1px 5px; font-size: .92em;
+      background: rgba(255,255,255,.1); border-radius: 4px;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14.5px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.1); vertical-align: top; }
+    th { color: #fff; white-space: nowrap; }
+    td { color: #cfd8e6; }
+    .note {
+      padding: 12px 14px; margin: 18px 0;
+      background: rgba(255,149,0,.14); border-left: 3px solid #ff9500; border-radius: 6px;
+    }
+    .card {
+      display: block; padding: 18px 20px; margin: 16px 0;
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+      border-radius: 12px; text-decoration: none;
+    }
+    .card:hover { background: rgba(47,123,255,.14); border-color: #2f7bff; }
+    .card b { display: block; font-size: 17px; color: #fff; }
+    .card span { color: #9fb0c8; font-size: 14.5px; }
+    nav { margin-top: 18px; font-size: 14.5px; }
+    nav a { margin-right: 16px; }
+    footer {
+      margin-top: 52px; padding-top: 18px;
+      border-top: 1px solid rgba(255,255,255,.14);
+      font-size: 13.5px; color: #8b9bb4;
+    }
+    footer a { margin-right: 14px; }
+  </style>
+  <script async
+    src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6432230820010337"
+    crossorigin="anonymous"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>사용법 — 궤적 비교</h1>
+    <p>자율주행 실험차량의 매핑 궤적과 주행 기록을 카카오 위성지도 위에 겹쳐 보고,
+       조향·속도·경로오차가 의도대로 움직였는지 확인하는 도구입니다.</p>
+    <nav>
+      <a href="./">도구 열기</a>
+      <a href="../">홈</a>
+      <a href="../privacy.html">개인정보처리방침</a>
+    </nav>
+  </header>
+
+  <h2>1. 파일 올리기</h2>
+  <p>화면 왼쪽 상자에 CSV를 <b>끌어다 놓거나</b> <code>파일 선택</code>을 누릅니다. 여러 개를 한꺼번에
+     올려도 됩니다. 파일 유형은 <b>묻지 않고 열 이름으로 판별</b>합니다.</p>
+  <table>
+    <tr><th>열 이름</th><th>판별</th><th>색</th></tr>
+    <tr><td><code>latitude</code>, <code>longitude</code></td><td>매핑 궤적 (차량이 따라갈 경로)</td><td>파랑 계열</td></tr>
+    <tr><td><code>fix_lat</code>, <code>fix_lon</code></td><td>주행 기록 (실제로 지나간 자리)</td><td>빨강 계열</td></tr>
+  </table>
+  <p>둘 다 아니면 <code>lat</code>/<code>lon</code> 비슷한 열을 한 번 더 찾아보고, 그래도 없으면
+     이유를 적어 거절합니다. 어느 열을 읽었는지는 목록에 그대로 표시되므로 오판을 바로 알아챌 수 있습니다.</p>
+
+  <h2>2. 벗어난 거리 읽기</h2>
+  <p>주행 궤적의 각 점에서 <b>매핑 궤적(폴리라인)까지의 최단거리</b>를 잽니다. 이것이 "얼마나 벗어나
+     달렸나"의 숫자 근거입니다. 평균·중앙값·95%·최대가 통계표에 나오고, <code>오차 색</code> 모드에서는
+     지도의 선이 초록(0 m)에서 빨강(눈금 상한)으로 칠해집니다.</p>
+  <p>눈금은 <code>자동</code>으로 두면 95% 값에 맞춰 잡힙니다. 서로 다른 경로를 달린 기록을 함께 올리면
+     오차가 수십 m로 나오는데, 고정 눈금에서는 그래프가 위쪽에 붙어 뭉개지기 때문입니다.</p>
+  <p>그래프에 마우스를 올리면 그 지점이 지도에 흰 점으로 찍히고, 아래 읽음줄에 그 시점의 거리·시각·
+     속도·GPS 등급이 나옵니다.</p>
+
+  <h2>3. GPS 정밀도 — 밝을수록 정밀</h2>
+  <p>오차가 제어 탓인지 수신 품질 탓인지 가르려면 그 순간의 정밀도를 알아야 합니다. 표준편차 σ를
+     기준으로 세 등급으로 나누고 <b>정밀할수록 밝게</b> 그립니다. 지도와 그래프 아래 띠가 같은 규칙을 씁니다.</p>
+  <table>
+    <tr><th>등급</th><th>기준</th><th>밝기</th></tr>
+    <tr><td>RTK 고정급</td><td>σ ≤ 5 cm (또는 <code>gps_quality</code> = 4)</td><td>그대로</td></tr>
+    <tr><td>중간</td><td>σ ≤ 30 cm</td><td>70%</td></tr>
+    <tr><td>낮음</td><td>σ &gt; 30 cm</td><td>40%</td></tr>
+  </table>
+  <p>판정에 쓸 열은 있는 것 중 가장 충실한 쪽을 자동으로 고릅니다 —
+     <code>gps_sigma_m</code> → <code>fix_cov_xx</code> 순으로 σ를 찾고, <code>gps_quality</code>는
+     4(RTK 고정)일 때만 등급을 끌어올립니다. <b>무엇으로 판정했는지와 파일에 적힌 상태값 원본을
+     항상 화면에 표시합니다</b> — 근거를 감추지 않는 것이 이 도구의 방침입니다.</p>
+  <div class="note">
+    정밀도 열이 아예 없는 파일(대개 매핑 CSV)은 등급을 매기지 않고 그 이유를 적습니다.
+    없는 값을 0으로 채우면 "측정했더니 0"으로 잘못 읽히기 때문입니다.
+  </div>
+
+  <h2>4. 제어 진단 — 순수추종·적분이 잘 돌았나</h2>
+  <p>주행 CSV에 제어 열이 있으면 아래에 20 Hz 시계열 그래프가 붙습니다. 지도 점은 연속 중복 좌표를
+     합치지만(GPS는 5 Hz), <b>제어 신호는 전 행을 그대로</b> 씁니다 — 같은 규칙을 적용하면 네 표본 중
+     셋이 사라지기 때문입니다.</p>
+  <table>
+    <tr><th>그래프</th><th>쓰는 열</th><th>읽는 법</th></tr>
+    <tr><td>조향 pot 지령각</td><td><code>cmd_steer_deg</code> · <code>steer_measured_deg</code> · 재현</td><td>지령과 실측이 벌어진 만큼이 액추에이터 추종 오차</td></tr>
+    <tr><td>지령 분해</td><td><code>heading_err_deg</code> · <code>target_dist_m</code> · <code>cte_i_term_deg</code></td><td>지령의 몇 도가 순수추종이고 몇 도가 오차 적분인지</td></tr>
+    <tr><td>경로 오차</td><td><code>cte_m</code></td><td>+가 경로 왼쪽. 상한을 넘으면 차가 안전정지한다</td></tr>
+    <tr><td>적분 상태</td><td><code>cte_integral</code></td><td>클램프에 붙어 있으면 적분이 포화한 것</td></tr>
+    <tr><td>속도</td><td><code>gps_kmh</code> · <code>meas_pulse</code> · <code>cmd_pulse</code></td><td>지령과 실측이 벌어진 구간이 "시켰는데 안 굴렀다"</td></tr>
+    <tr><td>구동 펄스</td><td><code>ref_pulse</code> · <code>out_pulse</code> · <code>meas_pulse</code></td><td><code>out ≠ ref</code>인 구간이 저속 보정이 걸린 구간</td></tr>
+  </table>
+  <p>아래 표에는 <b>조향 추종 RMS</b>, <b>조향 부드러움</b>(변화율 RMS와 좌우 반전 횟수 = 헌팅 지표),
+     그리고 <b>지령 재현 검산</b>이 나옵니다. 재현은 목표 방위·선행거리·오차 적분·지령 펄스만으로
+     차량의 조향 계산을 다시 돌린 값입니다. 잔차가 0에 가까우면 로직이 그대로 돈 것이고, 크면
+     그 자체가 조사할 단서입니다.</p>
+  <div class="note">
+    <b>이름이 오해를 부르는 열이 있습니다.</b> <code>heading_err_deg</code>는 헤딩 오차가 아니라
+    순수추종 목표점의 차체기준 방위입니다. <code>cmd_steer_deg</code>도 가변저항 행정 기준의
+    지령각이지 도로휠각이 아닙니다. 화면에도 그렇게 적어 두었습니다.
+  </div>
+
+  <h2>5. 궤적 생성 — 지도를 클릭해 경로 만들기</h2>
+  <p>매핑 궤적은 원래 사람이 차를 몰고 한 바퀴 돌아야 나옵니다. 코스를 바꿔 보거나 아직 못 가 본
+     곳을 미리 그려 보려면 그 왕복이 매번 필요합니다. <code>궤적 생성</code> 탭은 위성 영상 위를
+     클릭해 같은 형식의 CSV를 만들어 그 수고를 없앱니다. 카카오 지도의 '거리 재기'와 같은 손버릇입니다.</p>
+  <table>
+    <tr><th>조작</th><th>하는 일</th></tr>
+    <tr><td>좌클릭</td><td>그 자리에 점을 찍는다</td></tr>
+    <tr><td>끌기</td><td>지도를 옮긴다 (조금이라도 움직이면 클릭이 아니라 끌기로 본다)</td></tr>
+    <tr><td><code>Backspace</code></td><td>직전 클릭 구간을 통째로 되돌린다</td></tr>
+    <tr><td><code>ESC</code> · 우클릭</td><td>지정 완료 → 내려받기가 열린다</td></tr>
+  </table>
+  <p>클릭 지점은 <b>직전 점에서 매핑 간격의 정수배</b> 자리로 당겨 붙고, 그 사이는 같은 간격으로
+     직선 보간됩니다. 지도 최대 배율에서도 25 cm를 손으로 겨눌 수는 없으니 실제로는 2~3 m 단위로
+     찍히고, 이 보간이 점을 다 만듭니다. <b>커서와 '지금 클릭하면 찍힐 자리'를 둘 다</b> 보여 주므로
+     벌어진 만큼이 격자로 당겨진 거리입니다.</p>
+  <p>내려받는 파일은 차량의 매핑 산출물과 같은 열 순서를 쓰고, 진행 방위는 궤적 모양에서 실제로
+     계산해 채웁니다. 실측 열은 <b>비워 둡니다</b> — 0을 적으면 "측정했더니 0"으로 읽히지만 이 파일에는
+     측정 자체가 없습니다.</p>
+
+  <h2>6. 데이터 취급</h2>
+  <p>업로드 기능이 없습니다. CSV는 브라우저가 로컬에서 읽어 메모리에서 처리하며 서버로 보내지도
+     저장하지도 않습니다. 자세한 내용은 <a href="../privacy.html">개인정보처리방침</a>에 있습니다.</p>
+
+  <footer>
+    <a href="./">도구</a>
+    <a href="../">홈</a>
+    <a href="../privacy.html">개인정보처리방침</a>
+    <a href="https://github.com/cheongbaek/find_wc">소스</a>
+  </footer>
+</div>
+</body>
+</html>
