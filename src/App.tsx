@@ -362,6 +362,12 @@ export default function App() {
    * 그래프에 그릴 값.
    * 매핑 기준이 있으면 ★벗어난 거리★, 없으면 ★GPS 표준편차 σ★ 를 그린다.
    * 어느 쪽이든 아래 띠에는 정밀도 등급이 깔린다.
+   *
+   * ★둘 다 없어도 null 을 돌려주지 않는다★ [추가]
+   *   그릴 세로축이 없다고 막대까지 없애면 ★지점을 고를 길이 사라진다★ — 정밀도·상태
+   *   열이 없는 CSV(매핑 파일, 2026-08-12 이전 기록)에서 위경도를 못 읽던 것이 그
+   *   이유였다. 값은 null 로 넘기고(없는 것을 0 으로 채우지 않는다) 가로축만 살려,
+   *   긁으면 그 지점의 위경도가 아래 표에 뜨게 한다.
    */
   const series = useMemo(() => {
     if (!target) return null;
@@ -369,15 +375,17 @@ export default function App() {
       return { values: target.err, max: errMax, topLabel: `${errMax} m`, kind: "err" as const };
     }
     const sigma = target.track.parsed.sigma;
-    if (!sigma) return null;
-    const values = sigma.map((v) => v ?? 0);
-    const peak = Math.max(...values, 0.02);
-    return {
-      values,
-      max: peak,
-      topLabel: peak < 1 ? `σ ${fmt(peak * 100, 0)} cm` : `σ ${fmt(peak)} m`,
-      kind: "sigma" as const,
-    };
+    if (sigma) {
+      const values = sigma.map((v) => v ?? 0);
+      const peak = Math.max(...values, 0.02);
+      return {
+        values,
+        max: peak,
+        topLabel: peak < 1 ? `σ ${fmt(peak * 100, 0)} cm` : `σ ${fmt(peak)} m`,
+        kind: "sigma" as const,
+      };
+    }
+    return { values: null, max: 1, topLabel: "", kind: "none" as const };
   }, [target, errMax]);
 
   const mapTracks: MapTrack[] = useMemo(() => {
@@ -836,8 +844,12 @@ export default function App() {
           {target && series && (
             <>
               <p className="axis">
-                {series.kind === "err" ? "세로축: 벗어난 거리" : "세로축: GPS 표준편차 σ"} ·{" "}
-                {target.track.name}
+                {series.kind === "err"
+                  ? "세로축: 벗어난 거리"
+                  : series.kind === "sigma"
+                    ? "세로축: GPS 표준편차 σ"
+                    : "그릴 값 없음 — 가로축: 주행거리(지점 고르기)"}{" "}
+                · {target.track.name}
               </p>
               <ErrorProfile
                 values={series.values}
@@ -879,7 +891,9 @@ export default function App() {
                 </table>
               ) : (
                 <p className="readout">
-                  그래프를 끌어 지점을 고르세요. 손을 떼도 그 값이 남습니다.
+                  {series.kind === "none"
+                    ? "GPS 정밀도·상태 열이 없어 그래프는 비어 있습니다. 그래도 막대를 끌면 그 지점의 위경도가 나옵니다."
+                    : "그래프를 끌어 지점을 고르세요. 손을 떼도 그 값이 남습니다."}
                 </p>
               )}
             </>

@@ -375,6 +375,13 @@ button.danger:hover {
   vector-effect: non-scaling-stroke;
 }
 
+/* 그릴 값이 없을 때 곡선 자리에 놓는 홈 — "비어 있다"를 눈으로 알리면서도
+   끌 수 있는 막대라는 것을 보이게 한다 */
+.profile .lane {
+  fill: rgba(255, 255, 255, 0.26);
+  rx: 2;
+}
+
 .profile .cur {
   stroke: #fff;
   stroke-width: 1;
