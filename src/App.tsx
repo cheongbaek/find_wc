@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ControlPanel from "./components/ControlPanel";
 import DrawPanel from "./components/DrawPanel";
 import ErrorProfile from "./components/ErrorProfile";
+import GithubPicker from "./components/GithubPicker";
 import MapView, { type ColorMode, type MapTrack, type MapType } from "./components/MapView";
 import StatsPanel, { type StatSection } from "./components/StatsPanel";
 import TrackList, { type TrackRow } from "./components/TrackList";
@@ -86,6 +87,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sel, setSel] = useState<Sel | null>(null);
   const [fitToken, setFitToken] = useState(0);
+  const [ghOpen, setGhOpen] = useState(false);   // GitHub 선택 팝업(앱 안 오버레이)
   const [dragging, setDragging] = useState(false);
   const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -737,7 +739,28 @@ export default function App() {
           >
             <b>CSV 파일을 끌어다 놓으세요</b>
             <small>매핑(latitude/longitude) · 주행(fix_lat/fix_lon) 을 자동으로 구분합니다</small>
-            <span className="btn">파일 선택</span>
+            {/* ★두 칸을 나란히 둔다★ 바깥 .drop 전체가 '파일 선택' 클릭 영역이라,
+                GitHub 쪽은 stopPropagation 으로 그 클릭을 가로채야 한다. */}
+            <div className="pickrow">
+              <span className="btn">파일 선택</span>
+              <span
+                className="btn alt"
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setGhOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setGhOpen(true);
+                }}
+              >
+                GitHub 에서 선택
+              </span>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -926,6 +949,25 @@ export default function App() {
           </div>
         )}
       </aside>
+
+      {ghOpen && (
+        <GithubPicker
+          onClose={() => setGhOpen(false)}
+          // 받아 온 File 을 ★손으로 올린 파일과 같은 경로★ 로 태운다(addFiles).
+          //   내려받기 실패는 addFiles 가 내는 메모를 덮지 않게 뒤에 이어 붙인다.
+          onPick={(files, errors) => {
+            void (async () => {
+              if (files.length) await addFiles(files);
+              if (errors.length) {
+                setNotes((prev) => [
+                  ...prev,
+                  ...errors.map((e) => `GitHub 에서 받지 못했습니다 — ${e}`),
+                ]);
+              }
+            })();
+          }}
+        />
+      )}
 
       {dragging && <div className="dropveil">여기에 놓으세요</div>}
     </div>

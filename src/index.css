@@ -152,12 +152,224 @@ body {
   color: #9fb0c8;
 }
 
-.drop .btn {
+/* '파일 선택'과 'GitHub 에서 선택'을 나란히. 좁은 화면에서는 접혀 두 줄이 된다 */
+.pickrow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
   margin-top: 4px;
+}
+
+.drop .btn {
   padding: 6px 14px;
   font-size: 12.5px;
   background: #2f7bff;
   border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* GitHub 쪽은 같은 크기·다른 색 — 주 동작(파일 선택)과 구별되되 대등하게 보이도록 */
+.drop .btn.alt {
+  background: #2c3442;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.drop .btn.alt:hover,
+.drop .btn.alt:focus-visible {
+  background: #39445a;
+  outline: none;
+}
+
+/* ── GitHub 선택 팝업 (별도 창이 아니라 앱 안 오버레이) ───────────────── */
+
+.ghveil {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(6, 10, 18, 0.62);
+}
+
+.ghbox {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(640px, 100%);
+  background: #141a24;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.ghhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ghhead b {
+  font-size: 14px;
+}
+
+.ghtabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px 0;
+}
+
+.ghtabs button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+
+.ghtabs button.on {
+  background: #2f7bff;
+  border-color: #2f7bff;
+  color: #fff;
+}
+
+.ghbadge {
+  padding: 0 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(0, 0, 0, 0.32);
+  border-radius: 999px;
+}
+
+.ghhint {
+  margin: 8px 14px 0;
+  font-size: 11.5px;
+  color: #9fb0c8;
+}
+
+.ghhint a {
+  color: #7fb0ff;
+}
+
+.ghtools {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.ghtools input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+}
+
+.ghtools button {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ghlist {
+  flex: 1;
+  min-height: 120px;
+  padding: 0 8px 6px;
+  overflow-y: auto;
+}
+
+.ghrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  font-size: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ghrow:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ghrow.on {
+  background: rgba(47, 123, 255, 0.18);
+}
+
+.ghrow input {
+  flex: none;
+  accent-color: #2f7bff;
+}
+
+.ghname {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ghmeta {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #9fb0c8;
+}
+
+.ghmeta i {
+  font-style: normal;
+}
+
+.ghfoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ghsum {
+  font-size: 12px;
+  color: #cfd8e6;
+}
+
+.ghwarn {
+  color: #ffc46b;
+}
+
+.ghact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ghprog {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #cfd8e6;
+}
+
+.ghact .primary {
+  background: #2f7bff;
+  border-color: #2f7bff;
+  color: #fff;
+}
+
+.ghact .primary:disabled {
+  opacity: 0.45;
 }
 
 .dropveil {
