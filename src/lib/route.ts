@@ -150,7 +150,8 @@ export function toMappingCsv(pts: LatLng[]): string {
 
 /**
  * 파일 이름. ★route_ 로 시작해야 차량이 목록에 띄운다★ —
- * white1/prompt.py 는 `f.startswith('route_') and f.endswith('.csv')` 로 거른다.
+ * white1/prompt.py 는 `route_*.csv` 와 본선 코스 `maincourse.csv` 하나만 띄운다
+ * (본선 코스는 [2026-09-30] 부터 맨 위에 고정된다 — 여기서 만드는 파일과는 무관하다).
  */
 export function routeFileName(now = new Date()): string {
   const p = (n: number, w = 2) => String(n).padStart(w, "0");

@@ -503,6 +503,12 @@ button.danger:hover {
   white-space: nowrap;
 }
 
+/* 구간 요약 — ★잘리면 안 된다★ (토막 수가 오타를 알리는 줄이다) 그래서 줄바꿈을 허용한다 */
+.tracks .name small.zones {
+  color: #d9b8ff;
+  white-space: normal;
+}
+
 .badge {
   flex: none;
   padding: 1px 6px;
@@ -709,6 +715,54 @@ button.danger:hover {
   border: 3px solid #ff3b30;
   border-radius: 50%;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
+}
+
+/* ── terrain 구간 표식 (MapView 가 문자열로 심는다 · 범례도 같은 모양을 쓴다) ──
+   바탕색은 ZONE_COLOR 를 인라인으로 받는다(색의 소유자는 MapView 한 곳).
+   원은 T 구간의 시작점이고, 원 안 글자가 어느 신호인지다 — 일반 T 는 'T', T1 은 '1'. */
+.zone-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 2px solid #10131a;
+  border-radius: 11px;
+  color: #10131a;
+  font-size: 13px;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+  cursor: default;
+}
+
+.legend.zones {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.legend .zl {
+  flex: none;
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.legend.zones span {
+  margin-right: 8px;
+}
+
+/* 원 안 글자 풀이 — 한 줄을 통째로 쓴다(원 셋이 좁은 패널에서 쪼개지지 않게) */
+.legend.zones .zkey {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex-basis: 100%;
+  margin-right: 0;
 }
 
 @media (max-width: 720px) {

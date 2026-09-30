@@ -11,6 +11,8 @@ export interface TrackRow {
   lengthM: number;
   /** 어느 열을 읽었는지 + 걸러낸 행 — 유형 판별이 틀렸는지 여기서 바로 보인다 */
   detail: string;
+  /** terrain 구간 요약(토막 수·T 라벨 순서). 매핑 CSV 가 아니거나 terrain 열이 없으면 "" */
+  zones: string;
   isRef: boolean;
   isSelected: boolean;
 }
@@ -49,6 +51,7 @@ export default function TrackList({ rows, onToggle, onRemove, onSetRef, onSelect
             <small>
               {row.points.toLocaleString()}점 · {row.lengthM.toFixed(1)} m · {row.detail}
             </small>
+            {row.zones && <small className="zones">{row.zones}</small>}
           </button>
           {row.kind === "mapping" && !row.isRef && (
             <button

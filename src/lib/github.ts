@@ -18,6 +18,13 @@ const OWNER = "cheongbaek";
 const REPO = "gold";
 const REF = "main";
 
+/**
+ * ★본선 코스 — 목록 맨 위에 고정한다★ [2026-09-30] 이름에 시각이 없어 최신순 정렬에서
+ * 맨 뒤로 밀리는데, 가장 자주 여는 파일이다. 차량 prompt 도 같은 파일을 맨 위에 둔다
+ * (이름의 소유자는 gold 저장소 white1/traffic_timer.py 의 MAINCOURSE_FILE).
+ */
+export const PINNED_ROUTE = "maincourse.csv";
+
 /** 목록을 받아 올 폴더. ★앱의 두 궤적 유형과 1:1로 맞아떨어진다★ */
 export interface GithubSource {
   key: string;
@@ -131,6 +138,9 @@ export async function listGithubCsv(source: GithubSource): Promise<GhFile[]> {
   }
 
   files.sort((a, b) => {
+    if (a.name === PINNED_ROUTE || b.name === PINNED_ROUTE) {
+      return a.name === PINNED_ROUTE ? -1 : 1;
+    }
     if (a.stamp && b.stamp) return a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0;
     if (a.stamp) return -1;
     if (b.stamp) return 1;

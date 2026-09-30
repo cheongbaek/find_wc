@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GITHUB_SOURCES,
+  PINNED_ROUTE,
   downloadGithubCsv,
   folderUrl,
   formatBytes,
@@ -221,6 +222,7 @@ export default function GithubPicker({ onPick, onClose }: Props) {
               />
               <span className="ghname">{f.name}</span>
               <span className="ghmeta">
+                {f.name === PINNED_ROUTE && <i>본선 코스</i>}
                 {f.stamp && <i>{f.stamp}</i>}
                 {formatBytes(f.size)}
               </span>

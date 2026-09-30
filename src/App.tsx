@@ -3,7 +3,12 @@ import ControlPanel from "./components/ControlPanel";
 import DrawPanel from "./components/DrawPanel";
 import ErrorProfile from "./components/ErrorProfile";
 import GithubPicker from "./components/GithubPicker";
-import MapView, { type ColorMode, type MapTrack, type MapType } from "./components/MapView";
+import MapView, {
+  ZONE_COLOR,
+  type ColorMode,
+  type MapTrack,
+  type MapType,
+} from "./components/MapView";
 import StatsPanel, { type StatSection } from "./components/StatsPanel";
 import TrackList, { type TrackRow } from "./components/TrackList";
 import { useKakaoLoader } from "./hooks/useKakaoLoader";
@@ -22,6 +27,7 @@ import {
   KIND_LABEL,
   QUALITY_LABEL,
   readTrackFile,
+  zoneSegments,
   type ParsedTrack,
   type Quality,
 } from "./lib/csv";
@@ -50,6 +56,24 @@ const RECORD_COLORS = ["#ff3b30", "#ff9500", "#ff2d95"];
 const ERR_MAX_CHOICES: (number | "auto")[] = ["auto", 0.5, 1, 2, 5];
 
 const fmt = (v: number, digits = 2) => v.toFixed(digits);
+
+/**
+ * terrain 구간 요약 — 목록에 한 줄로 붙인다. ★몇 개인지가 아니라 몇 토막인지★ 를 센다
+ * (차량 driving.py 의 select_route 와 같은 태도 — 오타 하나가 구간을 둘로 쪼개는데,
+ * 개수만 보면 그것이 안 드러난다). T 는 라벨을 순서대로 나열해 번호 누락·중복을 보이게 한다.
+ */
+function zoneSummary(zones: string[] | null): string {
+  if (!zones) return "";
+  const segs = zoneSegments(zones);
+  if (!segs.length) return "구간 표시 없음 (terrain 열이 전부 GPS)";
+  const count = (k: string) => segs.filter((g) => g.label[0] === k).length;
+  const t = segs.filter((g) => g.label[0] === "T").map((g) => g.label);
+  const parts: string[] = [];
+  if (count("L")) parts.push(`L ${count("L")}곳`);
+  if (t.length) parts.push(`T ${t.length}곳(${t.join("·")})`);
+  if (count("S")) parts.push(`S ${count("S")}곳`);
+  return `구간 ${parts.join(" · ")}`;
+}
 
 function statRows(q: Quantiles, unit = "m") {
   return [
@@ -87,6 +111,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sel, setSel] = useState<Sel | null>(null);
   const [fitToken, setFitToken] = useState(0);
+  const [showZones, setShowZones] = useState(true); // terrain 구간(L·T·S) 표시
   const [ghOpen, setGhOpen] = useState(false);   // GitHub 선택 팝업(앱 안 오버레이)
   const [dragging, setDragging] = useState(false);
   const [notes, setNotes] = useState<string[]>([]);
@@ -398,6 +423,8 @@ export default function App() {
       pts: track.parsed.pts,
       err: analysis.errors.get(track.id) ?? null,
       quality: track.parsed.quality,
+      zones: track.parsed.zones,
+      wp: track.parsed.wp,
     }));
   }, [analysis]);
 
@@ -418,6 +445,8 @@ export default function App() {
       points: parsed.pts.length,
       lengthM: geom?.lengthM ?? 0,
       detail: `${parsed.latColumn}/${parsed.lonColumn}${dropped}`,
+      // ★따로 한 줄★ — detail 은 말줄임으로 잘리는 줄이라 거기 붙이면 요약이 안 보인다
+      zones: zoneSummary(parsed.zones),
       isRef: analysis?.ref?.id === track.id,
       isSelected: target?.track.id === track.id,
     };
@@ -584,6 +613,10 @@ export default function App() {
       const t = parsed.extras.t?.[p];
       if (t != null) rows.push({ label: "t_rel", value: `${fmt(t, 2)} s` });
       if (target.err) rows.push({ label: "벗어난 거리", value: `${fmt(target.err[p])} m` });
+      if (parsed.zones) {
+        rows.push({ label: "WP", value: String(parsed.wp?.[p] ?? p) });
+        rows.push({ label: "구간 (terrain)", value: parsed.zones[p] || "— (GPS 추종)" });
+      }
       if (parsed.quality) {
         rows.push({
           label: "GPS 등급",
@@ -620,6 +653,7 @@ export default function App() {
   }, [target, picked]);
 
   const hasError = tracks.some((t) => analysis?.errors.has(t.id));
+  const hasZones = tracks.some((t) => t.visible && t.parsed.zones?.some((z) => z));
   const padLeft = typeof window !== "undefined" && window.innerWidth > 720 ? 380 : 48;
 
   return (
@@ -632,6 +666,7 @@ export default function App() {
           errMax={errMax}
           cursor={cursor}
           fitToken={fitToken}
+          showZones={showZones}
           padLeft={padLeft}
           draw={
             tab === "draw" && (drawActive || drawPts.length)
@@ -822,6 +857,50 @@ export default function App() {
               </button>
             ))}
           </div>
+
+          {hasZones && (
+            <>
+              <div className="row seg">
+                <button
+                  type="button"
+                  className={showZones ? "on" : undefined}
+                  onClick={() => setShowZones(true)}
+                  title="매핑 CSV 의 terrain 열(L·T·S)을 지도에 그린다"
+                >
+                  구간 표시
+                </button>
+                <button
+                  type="button"
+                  className={!showZones ? "on" : undefined}
+                  onClick={() => setShowZones(false)}
+                >
+                  숨김
+                </button>
+              </div>
+              {showZones && (
+                <div className="legend zones">
+                  <i className="zl" style={{ background: ZONE_COLOR.L }} />
+                  <span>L 라이다</span>
+                  <i className="zl" style={{ background: ZONE_COLOR.T }} />
+                  <span>T 신호</span>
+                  <i className="zone-mark" style={{ background: ZONE_COLOR.S }}>
+                    S
+                  </i>
+                  <span>일시정지</span>
+                  {/* ★원 안 글자 = 어느 신호인가★ 원은 T 구간의 시작점에 찍힌다 */}
+                  <span className="zkey">
+                    T 구간 시작 원 —
+                    {["T", "1", "2"].map((t) => (
+                      <i key={t} className="zone-mark" style={{ background: ZONE_COLOR.T }}>
+                        {t}
+                      </i>
+                    ))}
+                    일반 T · T1 · T2 …
+                  </span>
+                </div>
+              )}
+            </>
+          )}
 
           {hasError && (
             <>

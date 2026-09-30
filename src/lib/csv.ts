@@ -98,6 +98,57 @@ export interface ControlSeries {
 }
 
 /**
+ * ★구간 표시 — 매핑 CSV 의 `terrain` 열★ (사람이 손으로 적는 '구간 지정' 열)
+ *
+ * 차량 쪽(white1/driving.py)과 같은 규칙으로 읽는다. 정본은 gold 저장소 CLAUDE.md 3.4:
+ *   · `L`/`l`      라이다(라바콘 회피) 구간 — 여러 행
+ *   · `S`/`s`      일시정지 — 한 행
+ *   · `T`/`t`      신호등 구간 — 여러 행
+ *   · `T1`~`T5`    본선 코스(maincourse.csv)의 신호 번호 — 여러 행 [2026-09-30]
+ *   · 그 밖(빈칸·`0`·숫자) GPS 추종 → 여기서는 `""`
+ * ★번호는 파일과 무관하게 적힌 그대로 보여 준다★ 차량은 maincourse.csv 에서만 번호를
+ *   구분하고 다른 경로의 `T3` 은 `T` 로 접지만, 지도에서는 적힌 것을 그대로 보여야
+ *   오타(번호 누락·중복)를 찾을 수 있다.
+ * ★주행 기록 CSV 에서는 읽지 않는다★ (그쪽 열은 구간 지정이 아니다)
+ */
+const ZONE_COLUMN = "terrain";
+
+/** terrain 한 칸 → `""` | `"L"` | `"S"` | `"T"` | `"T1"`… (`T03` → `T3`) */
+export function zoneOf(raw: string | undefined): string {
+  const s = (raw ?? "").trim().toUpperCase();
+  if (s === "L" || s === "S") return s;
+  const m = /^T(\d*)$/.exec(s);
+  if (!m) return "";
+  return m[1] ? `T${Number(m[1])}` : "T";
+}
+
+export interface ZoneSegment {
+  /** `"L"` | `"S"` | `"T"` | `"T1"`… */
+  label: string;
+  /** pts 번호 — 구간의 처음과 끝(끝 포함) */
+  i0: number;
+  i1: number;
+}
+
+/** 같은 라벨이 이어지는 점들을 한 구간으로 접는다. ★라벨이 바뀌면 다른 구간★ (T1 뒤 T2) */
+export function zoneSegments(zones: string[]): ZoneSegment[] {
+  const out: ZoneSegment[] = [];
+  let i = 0;
+  while (i < zones.length) {
+    const label = zones[i];
+    if (!label) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < zones.length && zones[j + 1] === label) j++;
+    out.push({ label, i0: i, i1: j });
+    i = j + 1;
+  }
+  return out;
+}
+
+/**
  * ★GPS 정밀도 등급★ — 밝기로 표현한다. 높을수록 밝다.
  *
  * 이진(RTK냐 아니냐)으로는 실측 파일들의 차이가 드러나지 않았다. 어떤 주행은
@@ -165,6 +216,17 @@ export interface ParsedTrack {
   mergedRows: number;
   /** 제어 신호 시계열 — ★병합하지 않은 전 행★. 제어 열이 하나도 없으면 null */
   control: ControlSeries | null;
+  /**
+   * 점마다의 구간 라벨(`zoneOf`) — pts 와 같은 길이. ★매핑 CSV 에 terrain 열이 있을 때만★,
+   * 그 밖은 null. 병합된 중복 점의 라벨은 앞 점이 비어 있을 때만 물려받는다(한 행짜리 S 를
+   * 병합이 지우지 않게).
+   */
+  zones: string[] | null;
+  /**
+   * 점마다 ★차량이 세는 WP 번호★ — 좌표가 성립한 행을 0부터 센 것(병합한 중복도 센다).
+   * driving 의 로그('🚦 T3 신호 대기 — WP 673')와 같은 번호라 대조할 수 있다. zones 와 함께만 채운다.
+   */
+  wp: number[] | null;
 }
 
 /**
@@ -412,6 +474,12 @@ export function parseTrackCsv(text: string): ParsedTrack {
   controlIdx.forEach(([name]) => (ctrlCols[name] = []));
   const tIdx = EXTRA_COLUMNS.t.map((k) => index.get(k)).find((i) => i !== undefined);
 
+  // ★구간 표시는 매핑 CSV 에서만★ (ZONE_COLUMN 주석)
+  const zoneIdx = kind === "mapping" ? index.get(ZONE_COLUMN) : undefined;
+  const zones: string[] | null = zoneIdx === undefined ? null : [];
+  const wp: number[] | null = zoneIdx === undefined ? null : [];
+  let usable = 0; // 좌표가 성립한 행 수 = 다음 점의 WP 번호
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     if (row.length === 1 && !row[0].trim()) continue; // 끝의 빈 줄
@@ -432,10 +500,16 @@ export function parseTrackCsv(text: string): ParsedTrack {
     // 여러 줄 반복된다. 그림엔 영향이 없지만 오차 통계에서 같은 점이 여러 번 세어져
     // 평균이 왜곡되므로 ★연속 중복은 하나로★ 합친다.
     const last = pts[pts.length - 1];
+    const zone = zones ? zoneOf(row[zoneIdx!]) : "";
     if (last && last.lat === lat && last.lng === lon) {
       merged++;
+      usable++;
+      if (zones && !zones[zones.length - 1] && zone) zones[zones.length - 1] = zone;
       continue;
     }
+    zones?.push(zone);
+    wp?.push(usable);
+    usable++;
     pts.push({ lat, lng: lon as number });
     rawLat.push((row[latIdx] ?? "").trim());
     rawLon.push((row[lonIdx] ?? "").trim());
@@ -471,6 +545,8 @@ export function parseTrackCsv(text: string): ParsedTrack {
           periodS: medianStep(ctrlT),
         }
       : null,
+    zones,
+    wp,
   };
 }
 

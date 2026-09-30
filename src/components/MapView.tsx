@@ -1,9 +1,16 @@
 import { useEffect, useRef } from "react";
-import type { Quality } from "../lib/csv";
-import { errColor, type LatLng } from "../lib/geo";
+import { zoneSegments, type Quality } from "../lib/csv";
+import { errColor, pathLength, toLocal, type LatLng } from "../lib/geo";
 
 export type MapType = "sat" | "road";
 export type ColorMode = "solid" | "err";
+
+/**
+ * ★구간 색 — 차량 HUD(white1/hud.py ZONE_COLOR)와 같은 색★ 두 화면에서 같은 구간이
+ * 같은 색이어야 옮겨 보며 헷갈리지 않는다. T 가 빨강이 아닌 것은 E-STOP·AEB 와 겹치지
+ * 않게 하려는 그쪽 규칙이다.
+ */
+export const ZONE_COLOR = { L: "#ff9d2e", T: "#d46bff", S: "#ffe066" } as const;
 
 /** 그리기 모드에서 지도가 보여 줄 것과, 지도가 돌려줄 사건 */
 export interface DrawState {
@@ -33,6 +40,10 @@ export interface MapTrack {
   err: number[] | null;
   /** 점마다의 GPS 정밀도 등급. 없으면 밝기 구분을 하지 않는다 */
   quality: Quality[] | null;
+  /** 매핑 CSV 의 구간 라벨(csv.ts zoneOf) — pts 와 같은 길이. 없으면 null */
+  zones: string[] | null;
+  /** 점마다의 차량 WP 번호 — 표식에 마우스를 올리면 뜨는 글에 쓴다 */
+  wp: number[] | null;
 }
 
 interface Props {
@@ -44,6 +55,8 @@ interface Props {
   cursor: LatLng | null;
   /** 값이 바뀌면 전체 궤적이 보이도록 화면을 다시 맞춘다 */
   fitToken: number;
+  /** terrain 구간(L·T·S)을 그릴 것인가 */
+  showZones: boolean;
   /** 패널에 가리지 않도록 왼쪽에 비워 둘 폭 [px] */
   padLeft: number;
   /** 그리기 중이면 그 상태. null 이면 종전대로 보기 전용 */
@@ -137,6 +150,7 @@ export default function MapView({
   errMax,
   cursor,
   fitToken,
+  showZones,
   padLeft,
   draw,
   onDrawClick,
@@ -184,7 +198,7 @@ export default function MapView({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const { LatLng, Polyline } = window.kakao.maps;
+    const { LatLng, Polyline, CustomOverlay } = window.kakao.maps;
 
     drawnRef.current.forEach((obj) => obj.setMap(null));
     drawnRef.current = [];
@@ -213,8 +227,46 @@ export default function MapView({
       colorRuns(track.pts, colorPicker(track, colorMode, errMax)).forEach((run) => {
         if (run.pts.length >= 2) line(run.pts, run.color, 4, 0.95, base + 1);
       });
+
+      // ── terrain 구간 (매핑 CSV) ── L·T 는 ★굵은 색 선으로 강조★(궤적보다 굵고 어두운
+      //    테두리를 따로 깐다), T 는 여기에 시작점 원을 더한다 — 원 안 글자가 ★어느 신호인지★
+      //    다(일반 T = 'T', T1 = '1', T2 = '2' …). S(한 행)는 원 하나.
+      //    T 의 원이 ★구간 시작★ 에 있는 이유 — 본선 코스의 T1·T3·T4 는 그 자리에 들어서는
+      //    순간 서므로(white1/driving.py) 거기가 '마킹 지점' 이다.
+      if (!showZones || !track.zones) return;
+      zoneSegments(track.zones).forEach((seg) => {
+        const kind = seg.label[0] as keyof typeof ZONE_COLOR;
+        const color = ZONE_COLOR[kind];
+        const path = track.pts.slice(seg.i0, seg.i1 + 1);
+        if (kind !== "S" && path.length >= 2) {
+          line(path, "#000000", 11, 0.55, base + 2);
+          line(path, color, 7, 1, base + 3);
+        }
+        if (kind === "L") return;
+        const at = track.pts[seg.i0];
+        const w0 = track.wp?.[seg.i0] ?? seg.i0;
+        const w1 = track.wp?.[seg.i1] ?? seg.i1;
+        const len = path.length >= 2 ? pathLength(toLocal(path, path[0])) : 0;
+        const title =
+          kind === "S"
+            ? `S 일시정지 · WP ${w0}`
+            : `${seg.label} 신호 · WP ${w0}~${w1} · ${len.toFixed(1)} m`;
+        // 라벨은 zoneOf 가 [LST0-9] 만 남기므로 그대로 심어도 된다.
+        // ★일반 T 는 'T' 를 적는다★ — 빈 원이면 번호를 못 읽은 것인지 일반 T 인지 갈리지 않는다.
+        const text = kind === "S" ? "S" : seg.label.slice(1) || "T";
+        keep(
+          new CustomOverlay({
+            map,
+            position: new LatLng(at.lat, at.lng),
+            content: `<div class="zone-mark" style="background:${color}" title="${title}">${text}</div>`,
+            xAnchor: 0.5,
+            yAnchor: 0.5,
+            zIndex: 700 + order,
+          })
+        );
+      });
     });
-  }, [tracks, colorMode, errMax]);
+  }, [tracks, colorMode, errMax, showZones]);
 
   // ── 오차 그래프에서 가리키는 지점 ──────────────────────────────────────
   useEffect(() => {
