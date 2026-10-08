@@ -9,6 +9,9 @@
 
 ## 원칙
 - **CSV는 브라우저 밖으로 나가지 않는다.** 업로드·전송·저장 기능을 제안하지 말 것
+  - **예외는 하나 — '궤적 생성 → GitHub 에 저장'** [2026-10-08 사용자 지시]. 손으로 그린 궤적을,
+    사람이 직접 누르고 토큰을 넣었을 때만 `find_wc/gps_data` 에 커밋한다. 올린 CSV·링크로 받은 CSV·
+    GitHub 에서 받은 CSV 는 여전히 어디에도 보내지 않는다 — **이 예외를 넓히지 말 것** (아래 'GitHub 연동')
 - 파일 유형은 **사용자에게 묻지 않고 열 이름으로 판별**한다 (`src/lib/csv.ts`)
   - `latitude`/`longitude` → 매핑, `fix_lat`/`fix_lon` → 주행
 - 거리 계산은 **국소평면 근사**로 통일한다 (`x = R·Δlon·cos(lat0)`, `y = R·Δlat`).
@@ -92,6 +95,47 @@
   나가지 않는다" 원칙이 깨진다
 - 꺼낸 즉시 `replaceState`로 프래그먼트를 지운다(중복 적재·주소 공유 시 좌표 유출 방지)
 - 받은 CSV는 `File`로 감싸 **손으로 올린 파일과 같은 경로**(`addFiles`)를 타게 한다
+
+## GitHub 연동 (`src/lib/github.ts` · `GithubPicker.tsx` · `GithubSaveDialog.tsx`)
+**읽기 — 'GitHub 에서 선택'** : 공개 리포 폴더의 CSV 를 골라 `File` 로 감싸 `addFiles` 에 태운다
+(손으로 올린 것과 같은 경로). 탭은 `GITHUB_SOURCES` 셋이다.
+
+| 탭 | 리포 / 폴더 |
+|---|---|
+| 매핑 경로 | `gold` / `gold_ws/src/white1/gps_data` |
+| 주행 기록 | `gold` / `gold_ws/src/white1/ros2bag` |
+| **단순 기록** [2026-10-08] | **`find_wc` / `gps_data`** (`SIMPLE_SOURCE`) |
+
+- **익명 호출이다**(토큰 없음, IP 당 시간당 60회) — 목록은 팝업을 열 때 폴더마다 한 번만 받는다.
+  내려받기는 raw.githubusercontent.com 이라 이 한도와 별개다. 목록에는 `.csv` 만 나온다(README 는 빠진다)
+
+**쓰기 — 궤적 생성 → 내려받기 아이콘 → 'GitHub 에 저장'** [2026-10-08]
+- 아이콘 하나가 **'로컬 다운로드 / GitHub 에 저장' 두 줄 메뉴**를 연다(`DrawPanel`). 둘은
+  `toMappingCsv()` 하나를 거쳐 **같은 바이트**를 낸다
+- 쓰는 곳은 **`SIMPLE_SOURCE` 하나** — 단순 기록 탭이 읽는 **같은 객체**다. 저장 위치를 바꾸려면 그 객체를 고친다
+- contents API `PUT` 한 번 = 커밋 하나. 이름은 `SAVE_NAME_RE`(영숫자·`._-`, `.csv`) — 경로 밖으로 못 나간다
+- **같은 이름은 조용히 덮지 않는다** — 422(sha 없음)를 받으면 '이름 바꾸기 / 덮어쓰기' 를 사람이 고른다.
+  덮어쓸 때만 sha 를 `cache: "no-store"` 로 다시 받는다(묵은 sha 는 409)
+- **토큰은 저장하는 사람이 그때 붙여 넣고, 이 탭의 메모리(모듈 변수)에만 둔다.**
+  ★localStorage·sessionStorage·쿠키에 넣지 말 것★ — 개인정보처리방침이 그것들을 안 쓴다고 적고 있고,
+  같은 페이지에서 광고 스크립트가 돈다. ★번들(`.env`·`VITE_*`)에 넣지 말 것★ — 정적 번들은 누구나 꺼낸다.
+  틀린 토큰(401)은 그 자리에서 버린다
+- '토큰 만들기' 는 fine-grained 토큰 **템플릿 URL**(`TOKEN_NEW_URL` — 이름·설명·소유자·기한 90일·
+  `contents=write` 를 채운다). **리포 선택은 URL 로 채울 수 없다** — 화면이 `Only select repositories →
+  cheongbaek/find_wc` 를 직접 고르라고 안내한다
+- **`X-GitHub-Api-Version` 헤더를 보내지 말 것** — CORS 사전요청 허용 목록에 없으면 막힌다
+- 익명 목록 응답은 GitHub 캐시(최대 60 s)를 탄다 → 방금 저장한 파일은 `savedThisTab` 이 목록에 끼워 넣는다.
+  ⚠️ 내려받기(raw.githubusercontent.com)도 캐시(약 5분)라 **덮어쓴 직후에는 옛 내용이 내려올 수 있다**
+- **공개 리포다** — 저장한 좌표는 누구나 본다(팝업이 그렇게 말한다)
+- `gps_data/` 만 바뀐 커밋은 **배포하지 않는다**(`deploy-pages.yml` `paths-ignore`). `.gitignore` 는
+  `!gps_data/*.csv` 로 이 폴더만 CSV 를 받는다
+- 검증 [2026-10-08] : 가짜 지도 SDK + 가짜 GitHub API 로 브라우저 시험 55항목 통과 — 메뉴(Esc·바깥·↑↓),
+  로컬 다운로드, 저장(401 → 토큰 버림 / 422 → 덮어쓰기 = sha 조회 후 PUT), **올린 바이트 = 내려받은 바이트**,
+  단순 기록 목록(README 빠짐·방금 저장한 것 끼움), 저장소·쿠키 비어 있음, 360 px 화면.
+  ★실제 api.github.com 에 쓰는 것은 아직 확인하지 않았다★(토큰이 없다) — CORS 사전요청이 실제로 통과하는지
+  첫 저장에서 볼 것
+- ⚠️ **개인정보처리방침(cheongbaek.github.io 리포 `privacy.html` 2절)은 아직 "업로드 기능 자체가 없습니다"** 다.
+  방문자가 올린 파일은 여전히 안 나가지만 문장은 틀렸다 — 그 리포에서 고칠 것
 
 ## 명령어
 - `npm run dev` — 개발 서버 (http://localhost:5173)

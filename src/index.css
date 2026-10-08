@@ -221,6 +221,7 @@ body {
 
 .ghtabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 10px 14px 0;
 }
@@ -370,6 +371,92 @@ body {
 
 .ghact .primary:disabled {
   opacity: 0.45;
+}
+
+/* ── GitHub 에 저장 팝업 (궤적 생성 → 내보내기) ────────────────────────── */
+
+.ghbox.narrow {
+  width: min(460px, 100%);
+}
+
+.ghsave {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+.ghsave .ghhint {
+  margin: 0;
+}
+
+.ghsave .note {
+  margin: 0;
+}
+
+.ghsave a {
+  color: #7fb0ff;
+}
+
+.ghsave code {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+.ghfield {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.ghfield span {
+  color: #9fb0c8;
+}
+
+.ghfield input {
+  min-width: 0;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+}
+
+.ghfield input:focus-visible {
+  outline: 2px solid #2f7bff;
+  outline-offset: 0;
+}
+
+.ghsize {
+  margin: 0;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: #9fb0c8;
+}
+
+.ghtok {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: #cfd8e6;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.ghok {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #5fd38d;
 }
 
 .dropveil {
@@ -909,6 +996,59 @@ button.icon {
   justify-content: center;
   width: 38px;
   padding: 0;
+}
+
+/* 내보내기 아이콘 + 그 아래 펼쳐지는 두 줄(로컬 다운로드 / GitHub 에 저장) */
+.dlwrap {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+
+.dlmenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 216px;
+  padding: 4px;
+  background: #141a24;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* .row button(flex:1 · nowrap)을 이겨야 한다 — 선택자를 하나 더 붙인다 */
+.draw .dlmenu button {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 10px;
+  text-align: left;
+  white-space: normal;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+}
+
+.draw .dlmenu button:hover,
+.draw .dlmenu button:focus-visible {
+  background: rgba(47, 123, 255, 0.22);
+  outline: none;
+}
+
+.dlmenu b {
+  font-size: 13px;
+}
+
+.dlmenu span {
+  font-size: 11px;
+  color: #9fb0c8;
 }
 
 button:disabled {

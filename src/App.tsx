@@ -3,6 +3,7 @@ import ControlPanel from "./components/ControlPanel";
 import DrawPanel from "./components/DrawPanel";
 import ErrorProfile from "./components/ErrorProfile";
 import GithubPicker from "./components/GithubPicker";
+import GithubSaveDialog from "./components/GithubSaveDialog";
 import MapView, {
   ZONE_COLOR,
   type ColorMode,
@@ -98,6 +99,13 @@ interface Sel {
   idx: number;
 }
 
+/** 'GitHub 에 저장' 팝업에 넘기는 것 — 여는 순간의 궤적을 CSV 로 굳혀 둔다 */
+interface GhSaveJob {
+  name: string;
+  text: string;
+  summary: string;
+}
+
 export default function App() {
   const kakao = useKakaoLoader();
 
@@ -113,6 +121,7 @@ export default function App() {
   const [fitToken, setFitToken] = useState(0);
   const [showZones, setShowZones] = useState(true); // terrain 구간(L·T·S) 표시
   const [ghOpen, setGhOpen] = useState(false);   // GitHub 선택 팝업(앱 안 오버레이)
+  const [ghSave, setGhSave] = useState<GhSaveJob | null>(null); // GitHub 에 저장 팝업
   const [dragging, setDragging] = useState(false);
   const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -319,10 +328,24 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [drawActive, finishDraw, undoVertex]);
 
-  const saveRoute = useCallback(() => {
+  // ── 내보내기 : 로컬 다운로드 / GitHub 에 저장 [2026-10-08] ─────────────
+  //  ★둘은 같은 바이트를 낸다★ — toMappingCsv() 하나를 거친다. GitHub 쪽은 단순 기록
+  //  폴더(find_wc/gps_data)에 커밋하고, 그 폴더는 'GitHub 에서 선택 → 단순 기록' 이 읽는다.
+  const downloadRoute = useCallback(() => {
     if (drawPts.length < 2) return;
     download(routeFileName(), toMappingCsv(drawPts));
   }, [drawPts]);
+
+  const openGithubSave = useCallback(() => {
+    if (drawPts.length < 2) return;
+    setGhSave({
+      name: routeFileName(),
+      text: toMappingCsv(drawPts),
+      summary: `${drawPts.length.toLocaleString()}점 · ${totalLength(drawPts).toFixed(2)} m`,
+    });
+  }, [drawPts]);
+
+  const closeGithubSave = useCallback(() => setGhSave(null), []);
 
   // ── 계산 ───────────────────────────────────────────────────────────────
   const analysis = useMemo(() => {
@@ -758,7 +781,8 @@ export default function App() {
               onSpacing={setSpacing}
               onUndo={undoVertex}
               onReset={resetDraw}
-              onDownload={saveRoute}
+              onDownloadLocal={downloadRoute}
+              onSaveGithub={openGithubSave}
             />
           </div>
         )}
@@ -1045,6 +1069,15 @@ export default function App() {
               }
             })();
           }}
+        />
+      )}
+
+      {ghSave && (
+        <GithubSaveDialog
+          name={ghSave.name}
+          text={ghSave.text}
+          summary={ghSave.summary}
+          onClose={closeGithubSave}
         />
       )}
 

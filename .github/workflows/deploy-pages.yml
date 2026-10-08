@@ -3,6 +3,12 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    # 단순 기록(gps_data/)만 바뀐 커밋은 배포하지 않는다 — 사이트가 그 폴더를 실행 중에
+    # GitHub API 로 읽으므로 다시 빌드할 것이 없다. 'GitHub 에 저장' 은 저장할 때마다 커밋을
+    # 하나 만드는데, 그때마다 배포가 돌면 Actions 시간만 쓴다.
+    # (다른 파일이 함께 바뀐 커밋은 그대로 배포된다.)
+    paths-ignore:
+      - "gps_data/**"
   workflow_dispatch:
 
 # GITHUB_TOKEN에 Pages 배포 권한 부여

@@ -4,8 +4,9 @@
 `map.py`(matplotlib)가 궤적의 *모양*만 비교했다면, 이 앱은 같은 궤적을 **실제 위성 영상
 위에** 얹어 "차선 어디를 밟고 갔는지"까지 보여 준다.
 
-CSV 두 개를 끌어다 놓으면 끝이다. 서버도, 로그인도, 데이터 업로드도 없다 —
-**파일은 브라우저 안에서만 읽히고 어디로도 전송되지 않는다.**
+CSV 두 개를 끌어다 놓으면 끝이다. 서버도, 로그인도 없다 —
+**올린 파일은 브라우저 안에서만 읽히고 어디로도 전송되지 않는다.**
+(예외는 하나 — `궤적 생성`에서 손으로 그린 궤적을 직접 **GitHub 에 저장**할 때뿐이다. 아래 참고)
 
 ## 쓰는 법
 
@@ -21,6 +22,10 @@ npm run dev                 # http://localhost:5173
    - `fix_lat`, `fix_lon` → **주행** 궤적 (`record.py` 산출물, `ros2bag/*.csv`) — 빨강
    - 둘 다 아니면 `lat`/`lon` 비슷한 열을 한 번 더 찾아보고, 없으면 이유를 적어 거절한다.
 3. `지우기`로 궤적 하나만 빼거나, `모두 지우기`로 비우고 다른 버전을 올린다.
+
+`GitHub 에서 선택`을 누르면 공개 리포의 CSV를 목록에서 골라 바로 올린다. 탭은 셋이다 —
+**매핑 경로**(`gold` 리포 `gold_ws/src/white1/gps_data`) · **주행 기록**(같은 리포 `ros2bag`) ·
+**단순 기록**(이 리포의 [`gps_data/`](gps_data/) — 아래 'GitHub 에 저장' 이 쓰는 곳).
 
 ### 카카오 키 등록
 
@@ -90,7 +95,7 @@ npm run dev                 # http://localhost:5173
 | 좌클릭 | 그 자리에 점을 찍는다 |
 | 끌기 | 지도를 옮긴다 (5 px 넘게 움직이면 클릭이 아니라 끌기로 본다) |
 | `Backspace` | 직전 **클릭 구간**을 통째로 되돌린다 |
-| `ESC` · 우클릭 | 지정 완료 → 다운로드 아이콘이 열린다 |
+| `ESC` · 우클릭 | 지정 완료 → 내려받기 아이콘이 열린다 |
 
 클릭 지점은 **직전 점에서 매핑 간격의 정수배** 자리로 당겨 붙고, 그 사이는 같은 간격으로
 자동 보간된다(직선만). 지도 최대 배율에서도 0.25 m를 손으로 겨눌 수는 없으니 실제로는
@@ -101,6 +106,19 @@ npm run dev                 # http://localhost:5173
 경로 목록(`prompt.py`)에 뜬다(그 목록에는 그 밖에 본선 코스 `maincourse.csv` 하나만 맨 위에 뜬다). 열 순서는 `mapping.py` 산출물과 같고, `heading`은 궤적
 모양에서 실제로 계산해 채운다. 실계측 열(`wheel_pulse` 등)은 **비워 둔다** — 0을 적으면
 '측정했더니 0이었다'로 읽히지만 이 파일에는 측정 자체가 없다.
+
+내려받기 아이콘을 누르면 두 줄이 뜬다. 둘이 내는 파일은 **바이트까지 같다**.
+
+| 항목 | 하는 일 |
+| --- | --- |
+| 로컬 다운로드 | `route_*.csv`를 이 기기에 내려받는다 |
+| GitHub 에 저장 | 같은 파일을 이 리포의 `gps_data/`에 커밋한다 → `GitHub 에서 선택` → **단순 기록**에서 다시 연다 |
+
+GitHub 에 저장하려면 **이 리포에 쓸 수 있는 fine-grained 토큰**이 필요하다. 팝업의 `토큰 만들기`가
+이름·기한(90일)·`Contents: Read and write`를 채운 토큰 화면을 연다 — `Repository access`에서
+`Only select repositories` → `cheongbaek/find_wc` 하나만 고르면 된다. 토큰은 **그 탭의 메모리에만**
+두고 쿠키·브라우저 저장소에 남기지 않으므로 새로고침하면 다시 넣는다. 같은 이름이 있으면 덮어쓰지
+않고 먼저 묻는다. **리포가 공개라 저장한 좌표는 누구나 볼 수 있다.**
 
 ### GPS 정밀도 (RTK 여부)
 
@@ -182,18 +200,23 @@ src/
   hooks/useKakaoLoader.ts    SDK 동적 로드 (autoload=false → kakao.maps.load)
   lib/csv.ts                 CSV 파싱 + 유형 자동 판별
   lib/geo.ts                 국소평면 변환 · 최단거리 · 통계 · 오차 색
+  lib/github.ts              GitHub 폴더 목록·내려받기(익명) · 'GitHub 에 저장'(토큰)
   components/
     MapView.tsx              카카오 지도, 폴리라인, 위성 전환
     TrackList.tsx            올라온 궤적 목록
     ErrorProfile.tsx         오차 그래프
     StatsPanel.tsx           통계표
+    GithubPicker.tsx         'GitHub 에서 선택' 팝업 (매핑 경로 · 주행 기록 · 단순 기록)
+    GithubSaveDialog.tsx     'GitHub 에 저장' 팝업
+gps_data/                    단순 기록 — 'GitHub 에 저장' 이 커밋하는 곳
 ```
 
 ## 배포
 
 `npm run build` → `dist/`. GitHub Pages 워크플로가 `.github/workflows/deploy-pages.yml`에
 있고, `BASE_PATH`와 `VITE_KAKAO_JS_KEY`(리포지토리 시크릿)를 주입한다. 배포한 도메인도
-카카오 콘솔의 플랫폼 > Web 에 등록해야 한다.
+카카오 콘솔의 플랫폼 > Web 에 등록해야 한다. **`gps_data/`만 바뀐 커밋은 배포하지 않는다**
+(`paths-ignore`) — 사이트가 그 폴더를 실행 중에 GitHub API로 읽기 때문이다.
 
 ---
 

@@ -12,6 +12,8 @@ dist-ssr/
 # 궤적 원본 데이터 (용량이 크고 주행마다 달라진다 — 저장소에 넣지 않는다)
 *.csv
 !docs/**/*.csv
+# 단순 기록 — 사이트의 'GitHub 에 저장' 이 쓰고 'GitHub 에서 선택 → 단순 기록' 이 읽는다
+!gps_data/*.csv
 
 # editor
 .vscode/*

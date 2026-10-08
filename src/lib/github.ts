@@ -1,22 +1,28 @@
 /**
- * github.ts — cheongbaek/gold 리포에 올라와 있는 CSV 를 목록으로 받아 내려받는다.
+ * github.ts — 공개 리포의 CSV 를 목록으로 받아 내려받고, 궤적 생성 결과를 리포에 저장한다.
  *
- * ★"CSV 는 브라우저 밖으로 나가지 않는다" 원칙과 어긋나지 않는다★
- *   그 원칙은 ★사용자의 파일을 밖으로 보내지 말라★ 는 것이다. 여기는 반대 방향으로,
- *   이미 공개된 리포의 파일을 ★받아 오기만★ 한다. 올리는 경로는 없고 앞으로도 없다.
- *
- * ★토큰을 쓰지 않는다★ 공개 리포라 익명 요청으로 읽힌다. 토큰을 넣으면 정적 사이트
- *   번들에 그대로 박혀 누구나 꺼내 쓸 수 있으므로 ★넣지 말 것★.
- *   대신 익명 한도(IP 당 시간당 60회)가 있다 — 그래서 목록은 한 번 받아 캐시하고,
+ * ★읽기(목록·내려받기)는 토큰을 쓰지 않는다★ 공개 리포라 익명 요청으로 읽힌다.
+ *   익명 한도(IP 당 시간당 60회)가 있다 — 그래서 목록은 한 번 받아 캐시하고,
  *   내려받기는 raw.githubusercontent.com 을 쓴다(그쪽은 이 한도와 별개다).
+ *
+ * ★쓰기는 'GitHub 에 저장' 하나뿐이다★ [2026-10-08 — 사용자 지시]
+ *   궤적 생성 탭에서 사람이 직접 누를 때만, ★단순 기록 폴더(find_wc/gps_data)★ 에 올린다.
+ *   "CSV 는 브라우저 밖으로 나가지 않는다" 의 유일한 예외다 — 올린 파일·링크로 받은 CSV·
+ *   GitHub 에서 받은 CSV 는 여전히 어디에도 보내지 않는다.
+ *   - 토큰은 ★저장하는 사람이 그때 붙여 넣는다★. 번들에 넣지 말 것 — 정적 사이트 번들은
+ *     누구나 꺼내 볼 수 있다.
+ *   - 토큰은 ★이 탭의 메모리에만★ 둔다(아래 sessionToken). 쿠키·localStorage·
+ *     sessionStorage 에 남기지 않는다 — 개인정보처리방침이 그것들을 쓰지 않는다고 적고
+ *     있고, 같은 페이지에서 광고 스크립트가 돌기 때문이다(저장소는 그 스크립트도 읽는다).
  *
  * CORS : api.github.com·raw.githubusercontent.com 둘 다 `Access-Control-Allow-Origin: *`
  *   를 준다. 그래서 프록시 없이 브라우저에서 곧바로 부를 수 있다(2026-09-14 확인).
+ *   쓰기(PUT)는 Authorization·Content-Type 때문에 사전 요청(preflight)이 붙는데, GitHub 이
+ *   그 둘을 허용한다. ★X-GitHub-Api-Version 은 보내지 않는다★ — 허용 헤더 목록에 없으면
+ *   사전 요청에서 막힌다(값을 안 주면 서버가 기본 버전을 쓴다).
  */
 
 const OWNER = "cheongbaek";
-const REPO = "gold";
-const REF = "main";
 
 /**
  * ★본선 코스 — 목록 맨 위에 고정한다★ [2026-09-30] 이름에 시각이 없어 최신순 정렬에서
@@ -25,28 +31,55 @@ const REF = "main";
  */
 export const PINNED_ROUTE = "maincourse.csv";
 
-/** 목록을 받아 올 폴더. ★앱의 두 궤적 유형과 1:1로 맞아떨어진다★ */
+/** 목록을 받아 올 폴더. ★리포까지 폴더마다 따로 든다★ — 단순 기록은 차량 리포(gold)가
+ *  아니라 이 앱의 리포(find_wc)에 있다. */
 export interface GithubSource {
   key: string;
   /** 화면에 쓰는 이름 — 경로가 아니라 '무엇이 들었는지' 를 적는다 */
   label: string;
   hint: string;
+  owner: string;
+  repo: string;
+  ref: string;
   path: string;
 }
+
+/**
+ * ★단순 기록★ [2026-10-08] — 이 앱 리포의 gps_data 폴더.
+ * 'GitHub 에 저장' 이 쓰는 곳도 ★여기 하나★ 다(쓰는 곳과 읽는 곳이 같은 객체를 본다).
+ * 이 폴더에 CSV 를 올리는 커밋은 사이트를 다시 배포하지 않는다 —
+ * .github/workflows/deploy-pages.yml 의 paths-ignore 가 거른다.
+ */
+export const SIMPLE_SOURCE: GithubSource = {
+  key: "simple",
+  label: "단순 기록",
+  hint: "find_wc/gps_data · 'GitHub 에 저장' 한 궤적과 직접 올린 CSV",
+  owner: OWNER,
+  repo: "find_wc",
+  ref: "main",
+  path: "gps_data",
+};
 
 export const GITHUB_SOURCES: GithubSource[] = [
   {
     key: "gps_data",
     label: "매핑 경로",
     hint: "gps_data · 차가 따라갈 경로(latitude/longitude)",
+    owner: OWNER,
+    repo: "gold",
+    ref: "main",
     path: "gold_ws/src/white1/gps_data",
   },
   {
     key: "ros2bag",
     label: "주행 기록",
     hint: "ros2bag · 실제로 달린 기록(fix_lat/fix_lon)",
+    owner: OWNER,
+    repo: "gold",
+    ref: "main",
     path: "gold_ws/src/white1/ros2bag",
   },
+  SIMPLE_SOURCE,
 ];
 
 export interface GhFile {
@@ -60,7 +93,30 @@ export interface GhFile {
 }
 
 export function folderUrl(source: GithubSource): string {
-  return `https://github.com/${OWNER}/${REPO}/tree/${REF}/${source.path}`;
+  return `https://github.com/${source.owner}/${source.repo}/tree/${source.ref}/${source.path}`;
+}
+
+/** contents API 주소. 경로는 조각마다 인코딩한다(폴더 구분 '/' 는 살린다) */
+function contentsUrl(source: GithubSource, sub = ""): string {
+  const path = sub ? `${source.path}/${sub}` : source.path;
+  return (
+    `https://api.github.com/repos/${source.owner}/${source.repo}/contents/` +
+    path.split("/").map(encodeURIComponent).join("/")
+  );
+}
+
+/**
+ * ★이 탭에서 방금 저장한 파일★ — 소스 key 별로 든다.
+ * 익명 목록 응답은 GitHub 쪽 캐시(최대 60 s)를 타서, 저장 직후 '단순 기록' 을 열면
+ * 새 파일이 아직 안 보일 수 있다. 저장 응답이 이미 그 파일의 정보를 주므로 목록에
+ * 직접 끼워 넣는다. 탭을 닫으면 사라진다(그때쯤이면 목록 응답이 따라잡았다).
+ */
+const savedThisTab = new Map<string, GhFile[]>();
+
+function rememberSaved(source: GithubSource, file: GhFile): void {
+  const list = (savedThisTab.get(source.key) ?? []).filter((f) => f.path !== file.path);
+  list.push(file);
+  savedThisTab.set(source.key, list);
 }
 
 /**
@@ -84,6 +140,23 @@ interface ContentsEntry {
   size?: unknown;
   type?: unknown;
   download_url?: unknown;
+  html_url?: unknown;
+}
+
+/** 목록 응답의 한 줄과 저장 응답의 content 가 ★같은 모양★ 이라 한 곳에서 읽는다.
+ *  CSV 가 아니거나 내려받을 주소가 없으면 null — 폴더 안의 README.md 같은 것이 그렇다. */
+function toGhFile(raw: ContentsEntry | null | undefined): GhFile | null {
+  if (raw?.type !== "file") return null;
+  const name = typeof raw.name === "string" ? raw.name : "";
+  const downloadUrl = typeof raw.download_url === "string" ? raw.download_url : "";
+  if (!/\.csv$/i.test(name) || !downloadUrl) return null;
+  return {
+    name,
+    path: typeof raw.path === "string" ? raw.path : name,
+    size: typeof raw.size === "number" ? raw.size : 0,
+    downloadUrl,
+    stamp: parseStamp(name),
+  };
 }
 
 /**
@@ -92,9 +165,7 @@ interface ContentsEntry {
  * 시각을 못 읽은 파일은 뒤로 보내되 서로는 이름순으로 둔다.
  */
 export async function listGithubCsv(source: GithubSource): Promise<GhFile[]> {
-  const url =
-    `https://api.github.com/repos/${OWNER}/${REPO}/contents/` +
-    `${source.path.split("/").map(encodeURIComponent).join("/")}?ref=${REF}`;
+  const url = `${contentsUrl(source)}?ref=${encodeURIComponent(source.ref)}`;
 
   let res: Response;
   try {
@@ -122,19 +193,16 @@ export async function listGithubCsv(source: GithubSource): Promise<GhFile[]> {
     throw new Error("폴더가 아니라 파일을 가리키고 있습니다.");
   }
 
-  const files: GhFile[] = [];
+  let files: GhFile[] = [];
   for (const raw of body as ContentsEntry[]) {
-    if (raw?.type !== "file") continue;
-    const name = typeof raw.name === "string" ? raw.name : "";
-    const downloadUrl = typeof raw.download_url === "string" ? raw.download_url : "";
-    if (!/\.csv$/i.test(name) || !downloadUrl) continue;
-    files.push({
-      name,
-      path: typeof raw.path === "string" ? raw.path : name,
-      size: typeof raw.size === "number" ? raw.size : 0,
-      downloadUrl,
-      stamp: parseStamp(name),
-    });
+    const f = toGhFile(raw);
+    if (f) files.push(f);
+  }
+
+  // 방금 저장한 것은 응답보다 이쪽이 최신이다 — 같은 경로면 갈아 끼운다(덮어쓰기)
+  for (const saved of savedThisTab.get(source.key) ?? []) {
+    files = files.filter((f) => f.path !== saved.path);
+    files.push(saved);
   }
 
   files.sort((a, b) => {
@@ -204,4 +272,193 @@ export function formatBytes(n: number): string {
   if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   if (n >= 1024) return `${Math.round(n / 1024)} KB`;
   return `${n} B`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  쓰기 — 'GitHub 에 저장' [2026-10-08]   (머리말의 ★쓰기★ 절 참고)
+// ══════════════════════════════════════════════════════════════════════════
+
+/** ★이 탭의 메모리에만★ 둔다. 새로고침하면 사라진다(머리말 참고 — 저장소에 남기지 않는다). */
+let sessionToken: string | null = null;
+
+export function getSessionToken(): string | null {
+  return sessionToken;
+}
+
+export function setSessionToken(token: string | null): void {
+  const t = token?.trim();
+  sessionToken = t ? t : null;
+}
+
+/** 화면에는 앞 몇 글자와 끝 4자리만 — 붙여 넣은 것이 그 토큰인지 알아볼 만큼만 */
+export function maskToken(token: string): string {
+  if (token.length <= 12) return "…" + token.slice(-4);
+  return `${token.slice(0, token.startsWith("github_pat_") ? 11 : 4)}…${token.slice(-4)}`;
+}
+
+/**
+ * 토큰 만들기 주소. GitHub 의 fine-grained 토큰 '템플릿 URL'(2025-08 도입)로 이름·소유자·
+ * 기한·Contents 쓰기 권한을 미리 채운다. ★저장할 리포는 채울 수 없다★ — 화면이
+ * 'Only select repositories → cheongbaek/find_wc' 를 직접 고르라고 안내한다.
+ */
+export const TOKEN_NEW_URL =
+  "https://github.com/settings/personal-access-tokens/new" +
+  "?name=find_wc-gps_data" +
+  "&description=" +
+  encodeURIComponent("Save routes drawn on cheongbaek.github.io/find_wc to find_wc/gps_data") +
+  `&target_name=${OWNER}&expires_in=90&contents=write`;
+
+/** 저장 파일 이름 — 폴더 밖으로 나가거나(../) 이상한 경로가 되지 않게 좁게 받는다 */
+export const SAVE_NAME_RE = /^[0-9A-Za-z][0-9A-Za-z._-]{0,95}\.csv$/;
+
+export type SaveErrorKind =
+  | "auth"        // 401 — 토큰이 틀렸거나 기한이 지났다 → 토큰을 다시 받는다
+  | "forbidden"   // 403 — 토큰은 맞는데 그 리포에 쓸 권한이 없다
+  | "notfound"    // 404 — 토큰이 그 리포를 못 본다
+  | "exists"      // 422 — 같은 이름이 있다 → 덮어쓸지 사람이 정한다
+  | "conflict"    // 409 — 그 사이에 리포가 바뀌었다
+  | "network"
+  | "other";
+
+export class GithubSaveError extends Error {
+  readonly kind: SaveErrorKind;
+  constructor(kind: SaveErrorKind, message: string) {
+    super(message);
+    this.name = "GithubSaveError";
+    this.kind = kind;
+  }
+}
+
+export interface SaveResult {
+  /** 단순 기록 목록에 그대로 끼워 넣을 수 있는 항목 */
+  file: GhFile;
+  /** GitHub 에서 그 파일 보기 */
+  htmlUrl: string;
+  /** 만들어진 커밋 보기 (응답에 없으면 null) */
+  commitUrl: string | null;
+}
+
+/** UTF-8 바이트를 base64 로. btoa 는 Latin-1 만 받으므로 바이트를 한 번 거친다 */
+export function base64Utf8(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}` };
+}
+
+async function readJson(res: Response): Promise<Record<string, unknown>> {
+  try {
+    const body: unknown = await res.json();
+    return body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function httpError(status: number, body: Record<string, unknown>): GithubSaveError {
+  const msg = typeof body.message === "string" ? body.message : "";
+  switch (status) {
+    case 401:
+      return new GithubSaveError("auth", "토큰이 틀렸거나 기한이 지났습니다. 새 토큰을 넣어 주세요.");
+    case 403:
+      return new GithubSaveError(
+        "forbidden",
+        "이 토큰으로는 저장할 수 없습니다 — Repository access 에 cheongbaek/find_wc 가 있고 " +
+          "Contents 권한이 Read and write 인지 확인해 주세요." +
+          (msg ? ` (${msg})` : "")
+      );
+    case 404:
+      return new GithubSaveError(
+        "notfound",
+        "리포를 찾지 못했습니다 — 토큰의 Repository access 에 cheongbaek/find_wc 가 들어 있는지 확인해 주세요."
+      );
+    case 409:
+      return new GithubSaveError("conflict", "그 사이에 리포가 바뀌었습니다. 다시 저장해 주세요.");
+    case 422:
+      // sha 없이 같은 경로에 쓰면 이 응답이 온다. 다른 검증 오류는 그대로 보여 준다.
+      if (/sha/i.test(msg)) {
+        return new GithubSaveError("exists", "같은 이름의 파일이 이미 있습니다.");
+      }
+      return new GithubSaveError("other", `GitHub 이 요청을 거절했습니다${msg ? ` — ${msg}` : ""}`);
+    default:
+      return new GithubSaveError("other", `GitHub 응답 오류 ${status}${msg ? ` — ${msg}` : ""}`);
+  }
+}
+
+/** 이미 있는 파일의 sha — 덮어쓸 때만 필요하다. 없으면 null.
+ *  ★캐시를 쓰지 않는다★ 묵은 sha 를 내면 409 로 실패한다. */
+async function existingSha(source: GithubSource, name: string, token: string): Promise<string | null> {
+  const res = await fetch(`${contentsUrl(source, name)}?ref=${encodeURIComponent(source.ref)}`, {
+    headers: authHeaders(token),
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  const body = await readJson(res);
+  if (!res.ok) throw httpError(res.status, body);
+  return typeof body.sha === "string" ? body.sha : null;
+}
+
+/**
+ * ★단순 기록 폴더★(SIMPLE_SOURCE)에 CSV 한 개를 올린다 — contents API, 커밋 하나.
+ *
+ * overwrite 가 false 면 같은 이름이 있을 때 'exists' 로 실패한다. 덮어쓸지는 사람이
+ * 정한다(조용히 덮지 않는다). 성공하면 그 파일을 이 탭의 목록 캐시에 넣어, 바로 '단순
+ * 기록' 을 열어도 보이게 한다(rememberSaved).
+ */
+export async function saveGithubCsv(
+  name: string,
+  text: string,
+  message: string,
+  token: string,
+  { overwrite = false }: { overwrite?: boolean } = {}
+): Promise<SaveResult> {
+  const source = SIMPLE_SOURCE;
+  if (!SAVE_NAME_RE.test(name)) {
+    throw new GithubSaveError("other", "파일 이름은 영문·숫자·. _ - 로 쓰고 .csv 로 끝나야 합니다.");
+  }
+  try {
+    const sha = overwrite ? await existingSha(source, name, token) : null;
+    const res = await fetch(contentsUrl(source, name), {
+      method: "PUT",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        content: base64Utf8(text),
+        branch: source.ref,
+        ...(sha ? { sha } : {}),
+      }),
+    });
+    const body = await readJson(res);
+    if (!res.ok) throw httpError(res.status, body);
+
+    const content = (body.content ?? null) as ContentsEntry | null;
+    const path = `${source.path}/${name}`;
+    const file: GhFile = toGhFile(content) ?? {
+      name,
+      path,
+      size: new TextEncoder().encode(text).length,
+      downloadUrl: `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.ref}/${path}`,
+      stamp: parseStamp(name),
+    };
+    rememberSaved(source, file);
+
+    const commit = (body.commit ?? null) as { html_url?: unknown } | null;
+    return {
+      file,
+      htmlUrl:
+        typeof content?.html_url === "string"
+          ? content.html_url
+          : `https://github.com/${source.owner}/${source.repo}/blob/${source.ref}/${path}`,
+      commitUrl: typeof commit?.html_url === "string" ? commit.html_url : null,
+    };
+  } catch (e) {
+    if (e instanceof GithubSaveError) throw e;
+    throw new GithubSaveError("network", "GitHub 에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.");
+  }
 }

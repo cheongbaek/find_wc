@@ -6,7 +6,7 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>사용법 — 궤적 비교 (매핑 vs 주행)</title>
-  <meta name="description" content="매핑·주행 궤적 CSV를 위성지도에 겹쳐 보는 방법, GPS 정밀도 등급과 제어 진단 그래프를 읽는 법, 궤적을 손으로 그려 CSV로 내려받는 방법." />
+  <meta name="description" content="매핑·주행 궤적 CSV를 위성지도에 겹쳐 보는 방법, GPS 정밀도 등급과 제어 진단 그래프를 읽는 법, 궤적을 손으로 그려 CSV로 내려받거나 GitHub에 저장하는 방법." />
   <!-- ★스타일을 인라인으로 둔다★ 이 페이지는 find_wc 리포에 있고 도메인 루트의
        style.css 는 다른 리포(cheongbaek.github.io)에 있다. 링크로 걸면 그쪽이 바뀌거나
        도구를 다른 자리에 올리는 순간 스타일 없는 맨 HTML 이 된다 — 자체 완결로 둔다. -->
@@ -88,6 +88,10 @@
   </table>
   <p>둘 다 아니면 <code>lat</code>/<code>lon</code> 비슷한 열을 한 번 더 찾아보고, 그래도 없으면
      이유를 적어 거절합니다. 어느 열을 읽었는지는 목록에 그대로 표시되므로 오판을 바로 알아챌 수 있습니다.</p>
+  <p><code>GitHub 에서 선택</code>을 누르면 공개 리포의 CSV를 목록에서 골라 바로 불러옵니다. 탭은
+     셋입니다 — <b>매핑 경로</b>(차량 리포의 <code>gps_data</code>) · <b>주행 기록</b>(차량 리포의
+     <code>ros2bag</code>) · <b>단순 기록</b>(이 도구 리포의 <code>gps_data</code> — 5절의
+     <code>GitHub 에 저장</code>이 쓰는 곳). 받아 온 파일은 손으로 올린 파일과 똑같이 처리됩니다.</p>
 
   <h2>2. 벗어난 거리 읽기</h2>
   <p>주행 궤적의 각 점에서 <b>매핑 궤적(폴리라인)까지의 최단거리</b>를 잽니다. 이것이 "얼마나 벗어나
@@ -148,7 +152,7 @@
     <tr><td>좌클릭</td><td>그 자리에 점을 찍는다</td></tr>
     <tr><td>끌기</td><td>지도를 옮긴다 (조금이라도 움직이면 클릭이 아니라 끌기로 본다)</td></tr>
     <tr><td><code>Backspace</code></td><td>직전 클릭 구간을 통째로 되돌린다</td></tr>
-    <tr><td><code>ESC</code> · 우클릭</td><td>지정 완료 → 내려받기가 열린다</td></tr>
+    <tr><td><code>ESC</code> · 우클릭</td><td>지정 완료 → 내려받기 아이콘이 열린다</td></tr>
   </table>
   <p>클릭 지점은 <b>직전 점에서 매핑 간격의 정수배</b> 자리로 당겨 붙고, 그 사이는 같은 간격으로
      직선 보간됩니다. 지도 최대 배율에서도 25 cm를 손으로 겨눌 수는 없으니 실제로는 2~3 m 단위로
@@ -157,10 +161,29 @@
   <p>내려받는 파일은 차량의 매핑 산출물과 같은 열 순서를 쓰고, 진행 방위는 궤적 모양에서 실제로
      계산해 채웁니다. 실측 열은 <b>비워 둡니다</b> — 0을 적으면 "측정했더니 0"으로 읽히지만 이 파일에는
      측정 자체가 없습니다.</p>
+  <p>내려받기 아이콘을 누르면 두 줄이 뜹니다. 둘이 내는 파일은 바이트까지 같습니다.</p>
+  <table>
+    <tr><th>항목</th><th>하는 일</th></tr>
+    <tr><td>로컬 다운로드</td><td><code>route_YYYYMMDD_HHMMSS.csv</code>를 이 기기에 내려받는다</td></tr>
+    <tr><td>GitHub 에 저장</td><td>같은 파일을 <a href="https://github.com/cheongbaek/find_wc/tree/main/gps_data">cheongbaek/find_wc 의 gps_data</a>에
+        커밋한다 → <code>GitHub 에서 선택</code> → <b>단순 기록</b>에서 다시 연다</td></tr>
+  </table>
+  <div class="note">
+    <b>GitHub 에 저장에는 그 리포에 쓸 수 있는 토큰이 필요합니다.</b> 팝업의 <code>토큰 만들기</code>를
+    누르면 GitHub의 fine-grained 토큰 화면이 이름·기한·<code>Contents: Read and write</code>가 채워진 채
+    열립니다. <code>Repository access</code>에서 <code>Only select repositories</code> →
+    <code>cheongbaek/find_wc</code> 하나만 고르세요. 토큰은 <b>이 탭의 메모리에만</b> 두고 쿠키·브라우저
+    저장소에 남기지 않으므로, 새로고침하면 다시 넣어야 합니다. 같은 이름이 이미 있으면 덮어쓰지 않고
+    먼저 묻습니다. 리포가 공개라 저장한 좌표는 누구나 볼 수 있습니다.
+  </div>
 
   <h2>6. 데이터 취급</h2>
-  <p>업로드 기능이 없습니다. CSV는 브라우저가 로컬에서 읽어 메모리에서 처리하며 서버로 보내지도
-     저장하지도 않습니다. 자세한 내용은 <a href="../privacy.html">개인정보처리방침</a>에 있습니다.</p>
+  <p>올린 CSV는 브라우저가 로컬에서 읽어 메모리에서 처리하며 서버로 보내지도 저장하지도 않습니다.
+     <code>GitHub 에서 선택</code>도 공개 리포의 파일을 <b>내려받기만</b> 합니다.</p>
+  <p>예외는 하나입니다 — <code>궤적 생성</code>에서 직접 <b>GitHub 에 저장</b>을 누르면, 그때 그린 궤적
+     하나가 공개 리포 <code>cheongbaek/find_wc</code>의 <code>gps_data</code> 폴더로 올라갑니다. 그 리포에
+     쓸 권한이 있는 토큰을 넣어야만 동작합니다. 올린 파일·링크로 받은 파일·GitHub에서 받은 파일은
+     이 경로로 나가지 않습니다. 자세한 내용은 <a href="../privacy.html">개인정보처리방침</a>에 있습니다.</p>
 
   <footer>
     <a href="./">도구</a>
