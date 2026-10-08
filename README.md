@@ -114,11 +114,11 @@ npm run dev                 # http://localhost:5173
 | 로컬 다운로드 | `route_*.csv`를 이 기기에 내려받는다 |
 | GitHub 에 저장 | 같은 파일을 이 리포의 `gps_data/`에 커밋한다 → `GitHub 에서 선택` → **단순 기록**에서 다시 연다 |
 
-GitHub 에 저장하려면 **이 리포에 쓸 수 있는 fine-grained 토큰**이 필요하다. 팝업의 `토큰 만들기`가
-이름·기한(90일)·`Contents: Read and write`를 채운 토큰 화면을 연다 — `Repository access`에서
-`Only select repositories` → `cheongbaek/find_wc` 하나만 고르면 된다. 토큰은 **그 탭의 메모리에만**
-두고 쿠키·브라우저 저장소에 남기지 않으므로 새로고침하면 다시 넣는다. 같은 이름이 있으면 덮어쓰지
-않고 먼저 묻는다. **리포가 공개라 저장한 좌표는 누구나 볼 수 있다.**
+**GitHub 에 저장은 저장 서버(Cloudflare Worker)를 거친다** — 방문자는 토큰도 로그인도 없이 바로 저장한다.
+토큰은 그 서버의 비밀값에만 있고, 서버는 숫자 CSV 만 받으며 **덮어쓰지 않는다**(같은 이름이면 `_2`, `_3` …).
+서버를 만들고 사이트에 연결하는 절차는 [`worker/README.md`](worker/README.md)에 있다.
+연결되기 전(리포 변수 `SAVE_ENDPOINT`가 비어 있을 때)에는 저장할 때 fine-grained 토큰을 묻는다.
+**리포가 공개라 저장한 좌표는 누구나 볼 수 있다.**
 
 ### GPS 정밀도 (RTK 여부)
 

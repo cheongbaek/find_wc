@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   GithubSaveError,
+  SAVE_ENDPOINT,
   SAVE_NAME_RE,
   SIMPLE_SOURCE,
   TOKEN_NEW_URL,
@@ -9,6 +10,7 @@ import {
   getSessionToken,
   maskToken,
   saveGithubCsv,
+  saveViaServer,
   setSessionToken,
   type SaveResult,
 } from "../lib/github";
@@ -29,6 +31,9 @@ type Phase = "edit" | "saving" | "exists" | "done";
 /**
  * 궤적 생성 결과를 ★단순 기록 폴더(find_wc/gps_data)★ 에 커밋하는 팝업. [2026-10-08]
  *
+ * ★저장 서버(SAVE_ENDPOINT)가 있으면 토큰을 묻지 않는다★ — 이름만 보고 저장한다. 서버는 덮어쓰지
+ * 않고 같은 이름이면 _2, _3 … 을 붙인다. 아래 토큰 이야기는 서버가 없을 때의 옛 길이다.
+ *
  * ★토큰은 이 탭의 메모리에만★ 둔다(github.ts 머리말) — 그래서 새로고침하면 다시 묻는다.
  * ★성공한 토큰만★ 남긴다. 틀린 토큰(401)은 그 자리에서 버리고 다시 받는다.
  * ★같은 이름은 조용히 덮지 않는다★ — 422 가 오면 '이름 바꾸기 / 덮어쓰기' 를 사람이 고른다.
@@ -43,6 +48,8 @@ export default function GithubSaveDialog({ name: initialName, text, summary, onC
   const [phase, setPhase] = useState<Phase>("edit");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SaveResult | null>(null);
+  /** 저장 서버로 보내는가 — 그러면 토큰 칸이 없다 */
+  const server = SAVE_ENDPOINT !== "";
 
   const nameRef = useRef<HTMLInputElement>(null);
   const tokenRef = useRef<HTMLInputElement>(null);
@@ -62,11 +69,24 @@ export default function GithubSaveDialog({ name: initialName, text, summary, onC
 
   // 처음 열릴 때 손이 갈 칸에 커서를 둔다 — 토큰이 없으면 토큰, 있으면 이름
   useEffect(() => {
-    (getSessionToken() ? nameRef : tokenRef).current?.focus();
+    (server || getSessionToken() ? nameRef : tokenRef).current?.focus();
   }, []);
 
   const save = async (overwrite = false) => {
-    if (!useToken || !nameOk || busy) return;
+    if (!nameOk || busy) return;
+    if (server) {
+      setPhase("saving");
+      setError(null);
+      try {
+        setResult(await saveViaServer(name, text, summary));
+        setPhase("done");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setPhase("edit");
+      }
+      return;
+    }
+    if (!useToken) return;
     const t = useToken;
     setPhase("saving");
     setError(null);
@@ -127,6 +147,11 @@ export default function GithubSaveDialog({ name: initialName, text, summary, onC
         {phase === "done" && result ? (
           <div className="ghsave">
             <p className="ghok">저장했습니다</p>
+            {result.file.name !== name && (
+              <p className="note">
+                같은 이름이 이미 있어 <code>{result.file.name}</code> 으로 저장했습니다.
+              </p>
+            )}
             <p className="ghsize">
               <code>{result.file.path}</code> · {formatBytes(result.file.size)}
             </p>
@@ -191,7 +216,12 @@ export default function GithubSaveDialog({ name: initialName, text, summary, onC
               {summary} · {formatBytes(bytes)}
             </p>
 
-            {token ? (
+            {server ? (
+              <p className="note">
+                같은 이름이 이미 있으면 덮어쓰지 않고 뒤에 <code>_2</code>, <code>_3</code> … 을 붙여
+                저장합니다.
+              </p>
+            ) : token ? (
               <div className="ghtok">
                 <span>
                   토큰 <code>{maskToken(token)}</code> · 이 탭에만 있음
@@ -255,7 +285,11 @@ export default function GithubSaveDialog({ name: initialName, text, summary, onC
                 <button type="button" onClick={onClose} disabled={busy}>
                   취소
                 </button>
-                <button type="submit" className="primary" disabled={busy || !nameOk || !useToken}>
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={busy || !nameOk || (!server && !useToken)}
+                >
                   저장
                 </button>
               </>

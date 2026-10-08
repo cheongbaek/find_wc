@@ -7,6 +7,8 @@
  *
  * ★쓰기는 'GitHub 에 저장' 하나뿐이다★ [2026-10-08 — 사용자 지시]
  *   궤적 생성 탭에서 사람이 직접 누를 때만, ★단순 기록 폴더(find_wc/gps_data)★ 에 올린다.
+ *   ★저장 서버(SAVE_ENDPOINT)가 있으면 방문자는 아무 절차 없이 저장한다★ — 토큰은 그 서버
+ *   (Cloudflare Worker, worker/save-worker.js)의 비밀값에만 있다. 없으면 아래처럼 토큰을 묻는다.
  *   "CSV 는 브라우저 밖으로 나가지 않는다" 의 유일한 예외다 — 올린 파일·링크로 받은 CSV·
  *   GitHub 에서 받은 CSV 는 여전히 어디에도 보내지 않는다.
  *   - 토큰은 ★저장하는 사람이 그때 붙여 넣는다★. 번들에 넣지 말 것 — 정적 사이트 번들은
@@ -278,6 +280,13 @@ export function formatBytes(n: number): string {
 //  쓰기 — 'GitHub 에 저장' [2026-10-08]   (머리말의 ★쓰기★ 절 참고)
 // ══════════════════════════════════════════════════════════════════════════
 
+/**
+ * ★저장 서버 주소★ — 방문자가 아무 절차 없이 저장하는 길(saveViaServer).
+ * 배포 때 리포 변수 SAVE_ENDPOINT 가 VITE_SAVE_ENDPOINT 로 들어온다(.github/workflows/deploy-pages.yml).
+ * ★비어 있으면★ 저장하는 사람이 토큰을 넣는 옛 길(saveGithubCsv)로 돈다.
+ */
+export const SAVE_ENDPOINT: string = (import.meta.env.VITE_SAVE_ENDPOINT ?? "").trim();
+
 /** ★이 탭의 메모리에만★ 둔다. 새로고침하면 사라진다(머리말 참고 — 저장소에 남기지 않는다). */
 let sessionToken: string | null = null;
 
@@ -389,6 +398,57 @@ function httpError(status: number, body: Record<string, unknown>): GithubSaveErr
     default:
       return new GithubSaveError("other", `GitHub 응답 오류 ${status}${msg ? ` — ${msg}` : ""}`);
   }
+}
+
+/**
+ * 저장 서버로 보낸다 — ★토큰 없이★. 서버가 이름·내용(숫자 CSV, 1 MB 까지)을 다시 거르고,
+ * ★덮어쓰지 않는다★: 같은 이름이 있으면 _2, _3 … 을 붙여 저장하고 그 이름을 돌려준다.
+ */
+export async function saveViaServer(name: string, text: string, summary: string): Promise<SaveResult> {
+  const source = SIMPLE_SOURCE;
+  if (!SAVE_ENDPOINT) throw new GithubSaveError("other", "저장 서버가 설정되지 않았습니다.");
+  if (!SAVE_NAME_RE.test(name)) {
+    throw new GithubSaveError("other", "파일 이름은 영문·숫자·. _ - 로 쓰고 .csv 로 끝나야 합니다.");
+  }
+  let res: Response;
+  try {
+    res = await fetch(SAVE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, csv: text, summary }),
+    });
+  } catch {
+    throw new GithubSaveError("network", "저장 서버에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.");
+  }
+  const body = await readJson(res);
+  if (!res.ok) {
+    throw new GithubSaveError(
+      "other",
+      typeof body.error === "string" ? body.error : `저장 서버 응답 오류 ${res.status}`
+    );
+  }
+
+  const savedName = typeof body.name === "string" && SAVE_NAME_RE.test(body.name) ? body.name : name;
+  const path = `${source.path}/${savedName}`;
+  const file: GhFile = {
+    name: savedName,
+    path,
+    size: typeof body.size === "number" ? body.size : new TextEncoder().encode(text).length,
+    downloadUrl:
+      typeof body.download_url === "string"
+        ? body.download_url
+        : `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.ref}/${path}`,
+    stamp: parseStamp(savedName),
+  };
+  rememberSaved(source, file);
+  return {
+    file,
+    htmlUrl:
+      typeof body.html_url === "string"
+        ? body.html_url
+        : `https://github.com/${source.owner}/${source.repo}/blob/${source.ref}/${path}`,
+    commitUrl: typeof body.commit_url === "string" ? body.commit_url : null,
+  };
 }
 
 /** 이미 있는 파일의 sha — 덮어쓸 때만 필요하다. 없으면 null.

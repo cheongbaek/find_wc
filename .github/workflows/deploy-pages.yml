@@ -40,6 +40,9 @@ jobs:
           # https://cheongbaek.github.io/find_wc/ 하위 경로로 배포되므로 base를 맞춘다
           BASE_PATH: /find_wc/
           VITE_KAKAO_JS_KEY: ${{ secrets.VITE_KAKAO_JS_KEY }}
+          # 저장 서버(Cloudflare Worker) 주소 — 리포 '변수'(비밀값 아님) SAVE_ENDPOINT. 비어 있으면
+          # 'GitHub 에 저장' 이 토큰을 묻는다. 만드는 절차는 worker/README.md
+          VITE_SAVE_ENDPOINT: ${{ vars.SAVE_ENDPOINT }}
         run: npm run build
 
       - uses: actions/configure-pages@v5
