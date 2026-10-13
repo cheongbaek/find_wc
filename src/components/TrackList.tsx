@@ -13,6 +13,8 @@ export interface TrackRow {
   detail: string;
   /** terrain 구간 요약(토막 수·T 라벨 순서). 매핑 CSV 가 아니거나 terrain 열이 없으면 "" */
   zones: string;
+  /** 듀얼 GPS CSV 에서 펼친 궤적이면 몇 번(1·2) */
+  dualSide: number | null;
   isRef: boolean;
   isSelected: boolean;
 }
@@ -44,8 +46,10 @@ export default function TrackList({ rows, onToggle, onRemove, onSetRef, onSelect
             title="이 궤적을 오차 그래프 대상으로 선택"
           >
             <b>
-              {row.name}
+              {/* 이름만 말줄임한다 — 배지(유형 · 듀얼 번호 · 기준)는 이름이 길어도 늘 보여야 한다 */}
+              <span className="nm">{row.name}</span>
               <em className={`badge k-${row.kind}`}>{row.kindLabel}</em>
+              {row.dualSide && <em className="badge dual">듀얼 {row.dualSide}번</em>}
               {row.isRef && <em className="badge ref">기준</em>}
             </b>
             <small>

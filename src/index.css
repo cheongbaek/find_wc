@@ -580,6 +580,11 @@ button.danger:hover {
   white-space: nowrap;
 }
 
+.tracks .name b > .nm {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .tracks .name small {
   display: block;
   margin-top: 2px;
@@ -618,6 +623,11 @@ button.danger:hover {
 .badge.k-unknown {
   background: rgba(255, 255, 255, 0.18);
   color: #d6dde8;
+}
+
+.badge.dual {
+  background: rgba(46, 230, 168, 0.22);
+  color: #9ff5d6;
 }
 
 .badge.ref {
@@ -802,6 +812,16 @@ button.danger:hover {
   border: 3px solid #ff3b30;
   border-radius: 50%;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
+}
+
+/* 듀얼 GPS — 같은 시각의 1번 · 2번. 테두리는 궤적 색(인라인), 안의 글자가 GPS 번호다 */
+.cursor-dot.tagged {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: #10131a;
+  font: 800 11px/1 system-ui, sans-serif;
 }
 
 /* ── terrain 구간 표식 (MapView 가 문자열로 심는다 · 범례도 같은 모양을 쓴다) ──

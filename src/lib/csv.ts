@@ -4,6 +4,7 @@
 //   · 매핑 CSV (mapping.py 산출물, gps_data/route_*.csv) : latitude, longitude
 //   · 주행 기록 CSV (record.py 산출물, ros2bag/*.csv)     : fix_lat, fix_lon (/fix 원값)
 // 둘 다 아니면 lat/lon 비슷한 열을 마지막으로 한 번 더 찾아보고, 그래도 없으면 거절한다.
+// 매핑 CSV 에 latitude2/longitude2 가 더 있으면 ★듀얼 GPS CSV★ 다 — 한 파일을 궤적 둘로 펼친다(DUAL_COLUMNS).
 
 import type { LatLng } from "./geo";
 
@@ -16,6 +17,18 @@ const RECORD_LAT = "fix_lat";
 const RECORD_LON = "fix_lon";
 const FALLBACK_LAT = ["lat", "gps_lat", "ego_lat"];
 const FALLBACK_LON = ["lon", "lng", "gps_lon", "ego_lon"];
+
+/**
+ * ★듀얼 GPS CSV★ — hl_ws/gps_mapper_dual.py 의 route_dual_* · point_dual_* [2026-10-13]
+ *
+ * 한 줄에 ★같은 측위 시각(iTOW)의 두 GPS★ 가 함께 있다. 앞 열(latitude … gps_sigma_m)은 1번이라
+ * 옛 판도 1번 궤적으로는 그대로 읽는다. 2번은 같은 이름 끝에 '2' 를 붙인 열이다.
+ * 한쪽이 측위 안 된 줄은 그쪽 위경도가 빈칸이다 — 그 줄은 그 궤적에서만 빠진다.
+ * 두 궤적은 병합(hold)·빈칸이 서로 달라 점 번호가 어긋나므로 ★행 번호(rowPt/ptRow)로 잇는다★.
+ */
+const DUAL_SUFFIX = "2";
+const DUAL_COLUMNS = ["latitude", "longitude", "speed", "gps_quality", "gps_sigma_m"] as const;
+export type DualSide = 1 | 2;
 
 /** 있으면 같이 실어 두는 부가 정보 — 툴팁과 오차 그래프에 쓴다 */
 const EXTRA_COLUMNS = {
@@ -227,6 +240,15 @@ export interface ParsedTrack {
    * driving 의 로그('🚦 T3 신호 대기 — WP 673')와 같은 번호라 대조할 수 있다. zones 와 함께만 채운다.
    */
   wp: number[] | null;
+  /** 듀얼 GPS CSV 에서 펼친 궤적이면 몇 번(1·2), 아니면 null */
+  dualSide: DualSide | null;
+  /** 점마다 그 점이 처음 나온 CSV 데이터 행 번호(머리줄 빼고 0부터) — pts 와 같은 길이 */
+  ptRow: number[];
+  /**
+   * CSV 데이터 행 → 그 행의 점 번호(병합된 중복 행은 앞 점). 좌표가 성립하지 않는 행은 -1.
+   * ★듀얼의 두 궤적을 같은 행(= 같은 측위 시각)으로 잇는 데 쓴다★
+   */
+  rowPt: Int32Array;
 }
 
 /**
@@ -402,16 +424,60 @@ function decideQuality(collected: Map<string, string[]>, count: number): Quality
   };
 }
 
-export function parseTrackCsv(text: string): ParsedTrack {
+function splitRows(text: string): string[][] {
   const rows = splitCsv(text.replace(/^﻿/, "")); // 엑셀이 붙이는 BOM 제거
   if (!rows.length) throw new Error("빈 파일입니다.");
+  return rows;
+}
 
+/** 머리줄이 듀얼 GPS CSV 인가 — 1번(latitude/longitude)과 2번(latitude2/longitude2)이 다 있어야 한다 */
+function isDualHeader(header: string[]): boolean {
+  const names = new Set(header.map((name) => name.trim().toLowerCase()));
+  return ["latitude", "longitude", "latitude2", "longitude2"].every((k) => names.has(k));
+}
+
+/** CSV 하나 → 궤적 하나 (듀얼 CSV 면 1번 궤적) */
+export function parseTrackCsv(text: string): ParsedTrack {
+  const rows = splitRows(text);
+  return parseRows(rows, isDualHeader(rows[0]) ? 1 : null);
+}
+
+/**
+ * CSV 하나 → 궤적 목록. 보통은 하나, ★듀얼 GPS CSV 면 1번 · 2번 둘★.
+ * 한쪽이 측위가 한 번도 안 된 듀얼 파일은 다른 쪽만 돌려주고 그 이유를 notes 에 남긴다.
+ */
+export function parseTrackCsvAll(text: string): { tracks: ParsedTrack[]; notes: string[] } {
+  const rows = splitRows(text);
+  if (!isDualHeader(rows[0])) return { tracks: [parseRows(rows, null)], notes: [] };
+  const tracks: ParsedTrack[] = [];
+  const notes: string[] = [];
+  for (const side of [1, 2] as DualSide[]) {
+    try {
+      tracks.push(parseRows(rows, side));
+    } catch (e) {
+      notes.push(`${side}번 GPS — ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (!tracks.length) throw new Error(notes.join(" / "));
+  return { tracks, notes };
+}
+
+function parseRows(rows: string[][], side: DualSide | null): ParsedTrack {
   const header = rows[0].map((name) => name.trim());
   const index = new Map<string, number>();
   header.forEach((name, i) => {
     const key = name.toLowerCase();
     if (!index.has(key)) index.set(key, i);
   });
+  // ★2번 궤적은 '2' 붙은 열을 기본 이름 자리에 끼워 넣는다★ — 아래 판별·정밀도·부가 정보가 그대로 돈다.
+  //   2번에 없는 열(예: 옛 판에 speed2 가 없으면)은 1번 값을 빌리지 않도록 지운다.
+  if (side === 2) {
+    for (const base of DUAL_COLUMNS) {
+      const j = index.get(base + DUAL_SUFFIX);
+      if (j === undefined) index.delete(base);
+      else index.set(base, j);
+    }
+  }
 
   // ── 유형 판별 ──────────────────────────────────────────────────────────
   let kind: TrackKind;
@@ -479,6 +545,8 @@ export function parseTrackCsv(text: string): ParsedTrack {
   const zones: string[] | null = zoneIdx === undefined ? null : [];
   const wp: number[] | null = zoneIdx === undefined ? null : [];
   let usable = 0; // 좌표가 성립한 행 수 = 다음 점의 WP 번호
+  const ptRow: number[] = [];
+  const rowPt = new Int32Array(Math.max(0, rows.length - 1)).fill(-1);
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
@@ -504,12 +572,15 @@ export function parseTrackCsv(text: string): ParsedTrack {
     if (last && last.lat === lat && last.lng === lon) {
       merged++;
       usable++;
+      rowPt[r - 1] = pts.length - 1;
       if (zones && !zones[zones.length - 1] && zone) zones[zones.length - 1] = zone;
       continue;
     }
     zones?.push(zone);
     wp?.push(usable);
     usable++;
+    rowPt[r - 1] = pts.length;
+    ptRow.push(r - 1);
     pts.push({ lat, lng: lon as number });
     rawLat.push((row[latIdx] ?? "").trim());
     rawLon.push((row[lonIdx] ?? "").trim());
@@ -547,11 +618,19 @@ export function parseTrackCsv(text: string): ParsedTrack {
       : null,
     zones,
     wp,
+    dualSide: side,
+    ptRow,
+    rowPt,
   };
 }
 
 export async function readTrackFile(file: File): Promise<ParsedTrack> {
   return parseTrackCsv(await file.text());
+}
+
+/** 파일 하나 → 궤적 목록 (듀얼 GPS CSV 면 둘) */
+export async function readTrackFileAll(file: File): Promise<{ tracks: ParsedTrack[]; notes: string[] }> {
+  return parseTrackCsvAll(await file.text());
 }
 
 export const KIND_LABEL: Record<TrackKind, string> = {

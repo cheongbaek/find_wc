@@ -7,6 +7,7 @@ import GithubSaveDialog from "./components/GithubSaveDialog";
 import MapView, {
   ZONE_COLOR,
   type ColorMode,
+  type MapCursor,
   type MapTrack,
   type MapType,
 } from "./components/MapView";
@@ -27,7 +28,7 @@ import {
 import {
   KIND_LABEL,
   QUALITY_LABEL,
-  readTrackFile,
+  readTrackFileAll,
   zoneSegments,
   type ParsedTrack,
   type Quality,
@@ -35,6 +36,7 @@ import {
 import {
   crossTrack,
   cumulative,
+  distMeters,
   pathLength,
   quantiles,
   toLocal,
@@ -48,11 +50,24 @@ interface Track {
   color: string;
   visible: boolean;
   parsed: ParsedTrack;
+  /** 듀얼 GPS CSV 한 파일에서 펼친 두 궤적이 함께 갖는 값. 보통 파일은 null */
+  pairId: string | null;
 }
 
 // 매핑은 파랑 계열, 주행은 빨강 계열 — 여러 판을 올려도 계열로 구분된다
 const MAPPING_COLORS = ["#2f7bff", "#00c2ff", "#7c5cff"];
 const RECORD_COLORS = ["#ff3b30", "#ff9500", "#ff2d95"];
+// 듀얼 GPS 는 파일마다 [1번, 2번] 한 벌 — 두 궤적이 겹쳐도 갈리게 색상환에서 멀리 떨어뜨린다
+const DUAL_COLORS: [string, string][] = [
+  ["#3d8bff", "#2ee6a8"],
+  ["#a78bff", "#d4f53c"],
+];
+
+/** 1번 → 2번 수평 방위 [°] — 북 0°, 동 90° (gps_mapper_dual.py 의 baseline_deg 와 같은 정의) */
+function bearingDeg(a: LatLng, b: LatLng): number {
+  const [o] = toLocal([b], a);
+  return ((Math.atan2(o.x, o.y) * 180) / Math.PI + 360) % 360;
+}
 /** 오차 눈금 선택지. "auto" 는 데이터에 맞춰 스스로 정한다 */
 const ERR_MAX_CHOICES: (number | "auto")[] = ["auto", 0.5, 1, 2, 5];
 
@@ -150,19 +165,26 @@ export default function App() {
 
     for (const file of list) {
       try {
-        const parsed = await readTrackFile(file);
-        added.push({
-          id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          name: file.name,
-          color: "",
-          visible: true,
-          parsed,
-        });
-        if (parsed.kind === "unknown") {
-          messages.push(
-            `${file.name}: 유형을 확정하지 못해 ${parsed.latColumn}/${parsed.lonColumn} 열로 그렸습니다.`
-          );
+        // ★듀얼 GPS CSV 는 궤적 둘★ 로 펼친다(csv.ts DUAL_COLUMNS). 둘은 pairId 로 묶인다.
+        const { tracks: parsedList, notes: sideNotes } = await readTrackFileAll(file);
+        const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const pairId = parsedList[0].dualSide ? `${file.name}-${stamp}` : null;
+        for (const parsed of parsedList) {
+          added.push({
+            id: `${file.name}-${parsed.dualSide ?? 0}-${stamp}`,
+            name: parsed.dualSide ? `${file.name} · ${parsed.dualSide}번` : file.name,
+            color: "",
+            visible: true,
+            parsed,
+            pairId,
+          });
+          if (parsed.kind === "unknown") {
+            messages.push(
+              `${file.name}: 유형을 확정하지 못해 ${parsed.latColumn}/${parsed.lonColumn} 열로 그렸습니다.`
+            );
+          }
         }
+        sideNotes.forEach((note) => messages.push(`${file.name}: ${note}`));
       } catch (e) {
         messages.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -173,8 +195,17 @@ export default function App() {
         // 색은 ★같은 유형끼리 순서대로★ 돌려 쓴다
         const next = [...prev];
         for (const track of added) {
+          const side = track.parsed.dualSide;
+          if (track.pairId && side) {
+            // 같은 파일의 1번 · 2번은 같은 벌을 쓴다 — 벌 번호는 올라온 듀얼 파일 순서
+            const pairs = [...new Set(next.filter((t) => t.pairId).map((t) => t.pairId))];
+            const at = pairs.indexOf(track.pairId);
+            const set = DUAL_COLORS[(at < 0 ? pairs.length : at) % DUAL_COLORS.length];
+            next.push({ ...track, color: set[side - 1] });
+            continue;
+          }
           const palette = track.parsed.kind === "record" ? RECORD_COLORS : MAPPING_COLORS;
-          const used = next.filter((t) => t.parsed.kind === track.parsed.kind).length;
+          const used = next.filter((t) => t.parsed.kind === track.parsed.kind && !t.pairId).length;
           next.push({ ...track, color: palette[used % palette.length] });
         }
         return next;
@@ -397,6 +428,16 @@ export default function App() {
   }, [analysis, selectedId]);
 
   /**
+   * ★듀얼 GPS 의 짝 궤적★ — 그래프 대상이 듀얼 CSV 의 한쪽이면 같은 파일의 다른 쪽(보이는 것만).
+   * 그래프에서 지점을 고르면 이 궤적의 ★같은 행(= 같은 측위 시각)★ 점도 지도에 함께 찍는다.
+   */
+  const partner = useMemo(() => {
+    const pairId = target?.track.pairId;
+    if (!pairId) return null;
+    return tracks.find((t) => t.pairId === pairId && t.id !== target.track.id && t.visible) ?? null;
+  }, [tracks, target]);
+
+  /**
    * 오차 눈금.
    * ★자동★ 이면 95% 값을 올림해 잡는다 — 다른 경로를 달린 기록을 얹어도 그래프가
    * 위쪽에 붙어 뭉개지지 않는다(실측에서 15 m 오차가 1 m 눈금에 꽉 차 버렸다).
@@ -470,6 +511,7 @@ export default function App() {
       detail: `${parsed.latColumn}/${parsed.lonColumn}${dropped}`,
       // ★따로 한 줄★ — detail 은 말줄임으로 잘리는 줄이라 거기 붙이면 요약이 안 보인다
       zones: zoneSummary(parsed.zones),
+      dualSide: parsed.dualSide,
       isRef: analysis?.ref?.id === track.id,
       isSelected: target?.track.id === track.id,
     };
@@ -551,6 +593,40 @@ export default function App() {
       out.push({ title: `GPS 품질 — 판정 근거 ${qualitySource}`, rows: levelRows });
     }
 
+    // 듀얼 GPS — 같은 행(같은 측위 시각)의 두 점 사이 거리. 두 안테나가 고정돼 있으면 일정해야 한다.
+    if (partner) {
+      const a = target.track.parsed;
+      const b = partner.parsed;
+      const dist: number[] = [];
+      let onlyA = 0;
+      let onlyB = 0;
+      for (let r = 0; r < Math.min(a.rowPt.length, b.rowPt.length); r++) {
+        const i = a.rowPt[r];
+        const j = b.rowPt[r];
+        if (i >= 0 && j >= 0) dist.push(distMeters(a.pts[i], b.pts[j]));
+        else if (i >= 0) onlyA++;
+        else if (j >= 0) onlyB++;
+      }
+      const q = quantiles(dist);
+      const m = (v: number) => `${fmt(v, 3)} m`;
+      out.push({
+        title: `듀얼 GPS — 같은 시각 두 점 간격 (${a.dualSide}번 ↔ ${b.dualSide}번)`,
+        rows: [
+          ...(q
+            ? [
+                { label: "평균", value: m(q.mean) },
+                { label: "중앙값", value: m(q.p50) },
+                { label: "95%", value: m(q.p95) },
+                { label: "최대", value: m(q.max) },
+              ]
+            : []),
+          { label: "둘 다 측위", value: `${dist.length.toLocaleString()}줄` },
+          { label: `${a.dualSide}번만`, value: `${onlyA.toLocaleString()}줄` },
+          { label: `${b.dualSide}번만`, value: `${onlyB.toLocaleString()}줄` },
+        ],
+      });
+    }
+
     // 주행 기록에 차량이 스스로 계산해 남긴 횡오차(cte_m)가 있으면 대조한다.
     // 여기 화면이 계산한 값과 맞아떨어지면 "이 그림을 믿어도 된다"는 근거가 된다.
     const measuredErr = target.err;
@@ -579,7 +655,7 @@ export default function App() {
       }
     }
     return out;
-  }, [analysis, target]);
+  }, [analysis, target, partner]);
 
   /**
    * 고른 지점을 두 번호 공간 양쪽으로 환산한다.
@@ -620,6 +696,30 @@ export default function App() {
   const cursor: LatLng | null =
     mapIdx != null && target ? target.track.parsed.pts[mapIdx] ?? null : null;
 
+  /** 짝 궤적에서 같은 행의 점 번호. 그 행에서 짝이 측위되지 않았으면(빈칸) null */
+  const partnerIdx = useMemo(() => {
+    if (!partner || !target || mapIdx == null) return null;
+    const row = target.track.parsed.ptRow[mapIdx];
+    const q = row == null ? -1 : partner.parsed.rowPt[row] ?? -1;
+    return q >= 0 ? q : null;
+  }, [partner, target, mapIdx]);
+
+  /** 지도에 찍을 지점 — 보통은 하나, 듀얼이면 1번 · 2번 둘(번호와 궤적 색을 단다) */
+  const cursors: MapCursor[] = useMemo(() => {
+    if (!cursor || !target) return [];
+    const side = target.track.parsed.dualSide;
+    if (!side) return [{ at: cursor, label: null, color: null }];
+    const out: MapCursor[] = [{ at: cursor, label: String(side), color: target.track.color }];
+    if (partner && partnerIdx != null) {
+      out.push({
+        at: partner.parsed.pts[partnerIdx],
+        label: String(partner.parsed.dualSide),
+        color: partner.color,
+      });
+    }
+    return out;
+  }, [cursor, target, partner, partnerIdx]);
+
   /**
    * 고른 지점의 값들. ★CSV 에 적힌 위경도를 원문 그대로 맨 위에 둔다★ —
    * 다른 도구와 대조하려면 자릿수까지 같아야 하기 때문이다.
@@ -629,10 +729,12 @@ export default function App() {
     const { parsed } = target.track;
     const rows: { label: string; value: string }[] = [];
     const p = picked.pts;
+    // 듀얼이면 어느 GPS 값인지 이름 앞에 붙인다
+    const tag = parsed.dualSide ? `${parsed.dualSide}번 ` : "";
 
     if (p != null) {
-      rows.push({ label: "위도", value: parsed.rawLat[p] || fmt(parsed.pts[p].lat, 8) });
-      rows.push({ label: "경도", value: parsed.rawLon[p] || fmt(parsed.pts[p].lng, 8) });
+      rows.push({ label: `${tag}위도`, value: parsed.rawLat[p] || fmt(parsed.pts[p].lat, 8) });
+      rows.push({ label: `${tag}경도`, value: parsed.rawLon[p] || fmt(parsed.pts[p].lng, 8) });
       const t = parsed.extras.t?.[p];
       if (t != null) rows.push({ label: "t_rel", value: `${fmt(t, 2)} s` });
       if (target.err) rows.push({ label: "벗어난 거리", value: `${fmt(target.err[p])} m` });
@@ -642,13 +744,40 @@ export default function App() {
       }
       if (parsed.quality) {
         rows.push({
-          label: "GPS 등급",
+          label: `${tag}GPS 등급`,
           value: QUALITY_LABEL[parsed.quality[p]].replace(/ \(.*\)$/, ""),
         });
       }
       const sg = parsed.sigma?.[p];
       if (sg != null) {
-        rows.push({ label: "σ", value: sg < 1 ? `${fmt(sg * 100, 1)} cm` : `${fmt(sg)} m` });
+        rows.push({ label: `${tag}σ`, value: sg < 1 ? `${fmt(sg * 100, 1)} cm` : `${fmt(sg)} m` });
+      }
+
+      // ── 듀얼 GPS : 같은 행(같은 측위 시각)의 짝 ──
+      if (partner) {
+        const pp = partner.parsed;
+        const ptag = `${pp.dualSide}번 `;
+        const q = partnerIdx;
+        if (q == null) {
+          rows.push({ label: `${ptag}GPS`, value: "이 시각 측위 없음 (빈칸)" });
+        } else {
+          rows.push({ label: `${ptag}위도`, value: pp.rawLat[q] || fmt(pp.pts[q].lat, 8) });
+          rows.push({ label: `${ptag}경도`, value: pp.rawLon[q] || fmt(pp.pts[q].lng, 8) });
+          if (pp.quality) {
+            rows.push({
+              label: `${ptag}GPS 등급`,
+              value: QUALITY_LABEL[pp.quality[q]].replace(/ \(.*\)$/, ""),
+            });
+          }
+          const sg2 = pp.sigma?.[q];
+          if (sg2 != null) {
+            rows.push({ label: `${ptag}σ`, value: sg2 < 1 ? `${fmt(sg2 * 100, 1)} cm` : `${fmt(sg2)} m` });
+          }
+          const [one, two] =
+            parsed.dualSide === 1 ? [parsed.pts[p], pp.pts[q]] : [pp.pts[q], parsed.pts[p]];
+          rows.push({ label: "두 GPS 간격", value: `${fmt(distMeters(one, two), 3)} m` });
+          rows.push({ label: "방위 1번→2번", value: `${fmt(bearingDeg(one, two), 1)}°` });
+        }
       }
     }
 
@@ -673,7 +802,7 @@ export default function App() {
       add("GPS 속도", at("gpsKmh"), " km/h", 1);
     }
     return rows.length ? rows : null;
-  }, [target, picked]);
+  }, [target, picked, partner, partnerIdx]);
 
   const hasError = tracks.some((t) => analysis?.errors.has(t.id));
   const hasZones = tracks.some((t) => t.visible && t.parsed.zones?.some((z) => z));
@@ -687,7 +816,7 @@ export default function App() {
           mapType={mapType}
           colorMode={hasError ? colorMode : "solid"}
           errMax={errMax}
-          cursor={cursor}
+          cursors={cursors}
           fitToken={fitToken}
           showZones={showZones}
           padLeft={padLeft}
@@ -797,7 +926,10 @@ export default function App() {
             onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
           >
             <b>CSV 파일을 끌어다 놓으세요</b>
-            <small>매핑(latitude/longitude) · 주행(fix_lat/fix_lon) 을 자동으로 구분합니다</small>
+            <small>
+              매핑(latitude/longitude) · 주행(fix_lat/fix_lon) · 듀얼 GPS(latitude2/longitude2) 를 자동으로
+              구분합니다
+            </small>
             {/* ★두 칸을 나란히 둔다★ 바깥 .drop 전체가 '파일 선택' 클릭 영역이라,
                 GitHub 쪽은 stopPropagation 으로 그 클릭을 가로채야 한다. */}
             <div className="pickrow">

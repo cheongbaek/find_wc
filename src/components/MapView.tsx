@@ -32,6 +32,16 @@ export interface DrawState {
   preview: LatLng | null;
 }
 
+/**
+ * 그래프에서 고른 지점 하나. 보통 궤적은 label · color 가 null(흰 점 + 빨강 테두리 — 종전 모양),
+ * 듀얼 GPS 는 번호('1'·'2')와 궤적 색을 달아 어느 GPS 의 점인지 지도에서 바로 갈리게 한다.
+ */
+export interface MapCursor {
+  at: LatLng;
+  label: string | null;
+  color: string | null;
+}
+
 export interface MapTrack {
   id: string;
   color: string;
@@ -51,8 +61,8 @@ interface Props {
   mapType: MapType;
   colorMode: ColorMode;
   errMax: number;
-  /** 오차 그래프에서 가리키는 지점 — 지도에 흰 점으로 표시한다 */
-  cursor: LatLng | null;
+  /** 오차 그래프에서 가리키는 지점 — 보통 하나, 듀얼 GPS 면 같은 시각의 1번 · 2번 둘 */
+  cursors: MapCursor[];
   /** 값이 바뀌면 전체 궤적이 보이도록 화면을 다시 맞춘다 */
   fitToken: number;
   /** terrain 구간(L·T·S)을 그릴 것인가 */
@@ -148,7 +158,7 @@ export default function MapView({
   mapType,
   colorMode,
   errMax,
-  cursor,
+  cursors,
   fitToken,
   showZones,
   padLeft,
@@ -161,7 +171,7 @@ export default function MapView({
   const mapRef = useRef<kakao.maps.Map | null>(null);
   const drawnRef = useRef<Removable[]>([]);
   const overlayTypeRef = useRef<kakao.maps.MapTypeId | null>(null);
-  const cursorRef = useRef<kakao.maps.CustomOverlay | null>(null);
+  const cursorRef = useRef<{ key: string; overlay: kakao.maps.CustomOverlay }[]>([]);
   const sketchRef = useRef<Removable[]>([]);
 
   // ★콜백을 ref 로 붙든다★ 카카오 이벤트는 한 번만 걸고 싶은데, 콜백은 매 렌더
@@ -268,27 +278,32 @@ export default function MapView({
     });
   }, [tracks, colorMode, errMax, showZones]);
 
-  // ── 오차 그래프에서 가리키는 지점 ──────────────────────────────────────
+  // ── 오차 그래프에서 가리키는 지점 (듀얼이면 둘) ────────────────────────
+  //  끌 때마다 불리므로 표식은 ★모양(번호·색)이 바뀔 때만 새로 만들고★ 나머지는 자리만 옮긴다.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (!cursorRef.current) {
-      cursorRef.current = new window.kakao.maps.CustomOverlay({
-        position: new window.kakao.maps.LatLng(0, 0),
-        content: '<div class="cursor-dot"></div>',
-        yAnchor: 0.5,
-        xAnchor: 0.5,
-        zIndex: 900,
-      });
-    }
-    const overlay = cursorRef.current;
-    if (cursor) {
-      overlay.setPosition(new window.kakao.maps.LatLng(cursor.lat, cursor.lng));
-      overlay.setMap(map);
-    } else {
-      overlay.setMap(null);
-    }
-  }, [cursor]);
+    const { LatLng, CustomOverlay } = window.kakao.maps;
+    const held = cursorRef.current;
+    cursors.forEach((c, i) => {
+      const key = `${c.label ?? ""}|${c.color ?? ""}`;
+      if (!held[i] || held[i].key !== key) {
+        held[i]?.overlay.setMap(null);
+        // 번호는 '1'·'2', 색은 앱이 정한 #rrggbb 뿐이라 그대로 심어도 된다
+        const content = c.label
+          ? `<div class="cursor-dot tagged" style="border-color:${c.color}">${c.label}</div>`
+          : '<div class="cursor-dot"></div>';
+        held[i] = {
+          key,
+          overlay: new CustomOverlay({ position: new LatLng(0, 0), content, xAnchor: 0.5, yAnchor: 0.5, zIndex: 900 + i }),
+        };
+      }
+      held[i].overlay.setPosition(new LatLng(c.at.lat, c.at.lng));
+      held[i].overlay.setMap(map);
+    });
+    held.slice(cursors.length).forEach((h) => h.overlay.setMap(null));
+    held.length = cursors.length;
+  }, [cursors]);
 
   // ── 그리기 : 지도 사건 받기 (한 번만 건다) ────────────────────────────
   //  ★클릭과 끌기를 갈라야 한다★ 카카오의 '거리 재기'처럼, 눌렀다 뗀 자리가 거의
