@@ -88,6 +88,7 @@ function zoneSummary(zones: string[] | null): string {
   if (count("L")) parts.push(`L ${count("L")}곳`);
   if (t.length) parts.push(`T ${t.length}곳(${t.join("·")})`);
   if (count("S")) parts.push(`S ${count("S")}곳`);
+  if (count("Y")) parts.push(`Y ${count("Y")}곳`);
   return `구간 ${parts.join(" · ")}`;
 }
 
@@ -134,7 +135,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sel, setSel] = useState<Sel | null>(null);
   const [fitToken, setFitToken] = useState(0);
-  const [showZones, setShowZones] = useState(true); // terrain 구간(L·T·S) 표시
+  const [showZones, setShowZones] = useState(true); // terrain 구간(L·T·S·Y) 표시
   const [ghOpen, setGhOpen] = useState(false);   // GitHub 선택 팝업(앱 안 오버레이)
   const [ghSave, setGhSave] = useState<GhSaveJob | null>(null); // GitHub 에 저장 팝업
   const [dragging, setDragging] = useState(false);
@@ -1021,7 +1022,7 @@ export default function App() {
                   type="button"
                   className={showZones ? "on" : undefined}
                   onClick={() => setShowZones(true)}
-                  title="매핑 CSV 의 terrain 열(L·T·S)을 지도에 그린다"
+                  title="매핑 CSV 의 terrain 열(L·T·S·Y)을 지도에 그린다"
                 >
                   구간 표시
                 </button>
@@ -1043,6 +1044,8 @@ export default function App() {
                     S
                   </i>
                   <span>일시정지</span>
+                  <i className="zl" style={{ background: ZONE_COLOR.Y }} />
+                  <span>Y 감속</span>
                   {/* ★원 안 글자 = 어느 신호인가★ 원은 T 구간의 시작점에 찍힌다 */}
                   <span className="zkey">
                     T 구간 시작 원 —

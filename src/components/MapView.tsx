@@ -10,7 +10,7 @@ export type ColorMode = "solid" | "err";
  * 같은 색이어야 옮겨 보며 헷갈리지 않는다. T 가 빨강이 아닌 것은 E-STOP·AEB 와 겹치지
  * 않게 하려는 그쪽 규칙이다.
  */
-export const ZONE_COLOR = { L: "#ff9d2e", T: "#d46bff", S: "#ffe066" } as const;
+export const ZONE_COLOR = { L: "#ff9d2e", T: "#d46bff", S: "#ffe066", Y: "#7fd17f" } as const;
 
 /** 그리기 모드에서 지도가 보여 줄 것과, 지도가 돌려줄 사건 */
 export interface DrawState {
@@ -238,9 +238,10 @@ export default function MapView({
         if (run.pts.length >= 2) line(run.pts, run.color, 4, 0.95, base + 1);
       });
 
-      // ── terrain 구간 (매핑 CSV) ── L·T 는 ★굵은 색 선으로 강조★(궤적보다 굵고 어두운
+      // ── terrain 구간 (매핑 CSV) ── L·T·Y 는 ★굵은 색 선으로 강조★(궤적보다 굵고 어두운
       //    테두리를 따로 깐다), T 는 여기에 시작점 원을 더한다 — 원 안 글자가 ★어느 신호인지★
-      //    다(일반 T = 'T', T1 = '1', T2 = '2' …). S(한 행)는 원 하나.
+      //    다(일반 T = 'T', T1 = '1', T2 = '2' …). Y(감속구간)도 시작점에 원 'Y' — 차가 그 자리에서
+      //    3펄스로 내리고 빠르면 1단을 문다(white1·white2 driving). S(한 행)는 원 하나.
       //    T 의 원이 ★구간 시작★ 에 있는 이유 — 본선 코스의 T1·T3·T4 는 그 자리에 들어서는
       //    순간 서므로(white1/driving.py) 거기가 '마킹 지점' 이다.
       if (!showZones || !track.zones) return;
@@ -260,10 +261,12 @@ export default function MapView({
         const title =
           kind === "S"
             ? `S 일시정지 · WP ${w0}`
-            : `${seg.label} 신호 · WP ${w0}~${w1} · ${len.toFixed(1)} m`;
-        // 라벨은 zoneOf 가 [LST0-9] 만 남기므로 그대로 심어도 된다.
+            : kind === "Y"
+              ? `Y 감속구간 · WP ${w0}~${w1} · ${len.toFixed(1)} m`
+              : `${seg.label} 신호 · WP ${w0}~${w1} · ${len.toFixed(1)} m`;
+        // 라벨은 zoneOf 가 [LSTY0-9] 만 남기므로 그대로 심어도 된다.
         // ★일반 T 는 'T' 를 적는다★ — 빈 원이면 번호를 못 읽은 것인지 일반 T 인지 갈리지 않는다.
-        const text = kind === "S" ? "S" : seg.label.slice(1) || "T";
+        const text = kind === "S" || kind === "Y" ? kind : seg.label.slice(1) || "T";
         keep(
           new CustomOverlay({
             map,

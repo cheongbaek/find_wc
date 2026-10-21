@@ -118,6 +118,7 @@ export interface ControlSeries {
  *   · `S`/`s`      일시정지 — 한 행
  *   · `T`/`t`      신호등 구간 — 여러 행
  *   · `T1`~`T5`    본선 코스(maincourse.csv)의 신호 번호 — 여러 행 [2026-09-30]
+ *   · `Y`/`y`      감속구간(구간 안 3펄스 상한) — 여러 행 [2026-10-21 · 차량 white1·white2]
  *   · 그 밖(빈칸·`0`·숫자) GPS 추종 → 여기서는 `""`
  * ★번호는 파일과 무관하게 적힌 그대로 보여 준다★ 차량은 maincourse.csv 에서만 번호를
  *   구분하고 다른 경로의 `T3` 은 `T` 로 접지만, 지도에서는 적힌 것을 그대로 보여야
@@ -126,17 +127,17 @@ export interface ControlSeries {
  */
 const ZONE_COLUMN = "terrain";
 
-/** terrain 한 칸 → `""` | `"L"` | `"S"` | `"T"` | `"T1"`… (`T03` → `T3`) */
+/** terrain 한 칸 → `""` | `"L"` | `"S"` | `"Y"` | `"T"` | `"T1"`… (`T03` → `T3`) */
 export function zoneOf(raw: string | undefined): string {
   const s = (raw ?? "").trim().toUpperCase();
-  if (s === "L" || s === "S") return s;
+  if (s === "L" || s === "S" || s === "Y") return s;
   const m = /^T(\d*)$/.exec(s);
   if (!m) return "";
   return m[1] ? `T${Number(m[1])}` : "T";
 }
 
 export interface ZoneSegment {
-  /** `"L"` | `"S"` | `"T"` | `"T1"`… */
+  /** `"L"` | `"S"` | `"Y"` | `"T"` | `"T1"`… */
   label: string;
   /** pts 번호 — 구간의 처음과 끝(끝 포함) */
   i0: number;
